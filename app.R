@@ -89,7 +89,7 @@ ui <- fluidPage(
         tags$ul(
           tags$li("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN."),
           tags$li("SE_OS and SE_PFS must be > 0; R_WITHIN must be between -1 and 1."),
-          tags$li("REML is used as the primary analysis; MM (Moments Method) is shown as a sensitivity analysis."),
+          tags$li("REML is used as the primary analysis; MM (Method of Moments) is shown as a sensitivity analysis."),
           tags$li("If |PoS(REML) - PoS(MM)| exceeds the warning threshold, interpret the result with caution."),
           tags$li("More negative log(HR) generally indicates a more favorable treatment effect.")
         )
@@ -127,6 +127,44 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  
+  get_proximity_warning <- function(df, current_value, threshold, window_n = 2) {
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    
+    if (all(is.na(df$abs_diff))) return(NULL)
+    
+    idx <- which.min(abs(df$current_pfs_loghr - current_value))
+    if (length(idx) == 0 || is.na(idx)) return(NULL)
+    
+    left_idx <- max(1, idx - window_n)
+    right_idx <- min(nrow(df), idx + window_n)
+    
+    local_df <- df[left_idx:right_idx, , drop = FALSE]
+    
+    current_diff <- df$abs_diff[idx]
+    
+    if (is.na(current_diff)) return(NULL)
+    
+    # Only trigger proximity warning if current point itself is NOT already above threshold
+    if (current_diff > threshold) return(NULL)
+    
+    nearby_exceed <- any(local_df$abs_diff > threshold, na.rm = TRUE)
+    
+    if (!nearby_exceed) return(NULL)
+    
+    max_local_diff <- max(local_df$abs_diff, na.rm = TRUE)
+    
+    paste0(
+      "Scenario proximity warning: the current input does not exceed the method-sensitivity threshold at the exact point ",
+      "(|PoS(REML) - PoS(MM)| = ",
+      sprintf("%.4f", current_diff),
+      "), but nearby PFS scenarios do exceed the threshold. ",
+      "This suggests the current result is close to a method-sensitive region. ",
+      "Maximum nearby absolute difference = ",
+      sprintf("%.4f", max_local_diff),
+      "."
+    )
+  }
   
   hist_data <- reactive({
     if (!is.null(input$hist_csv)) {
@@ -359,17 +397,30 @@ server <- function(input, output, session) {
     
     if (!inherits(res$reml, "app_error") && !inherits(res$mm, "app_error")) {
       pos_diff <- abs(res$reml$pos - res$mm$pos)
+      
       if (pos_diff > input$pos_diff_warning_threshold) {
         msgs <- c(
           msgs,
           paste0(
             "Method sensitivity warning: |PoS(REML) - PoS(MM)| = ",
-            sprintf("%.3f", pos_diff),
+            sprintf("%.4f", pos_diff),
             ", which exceeds the warning threshold of ",
-            sprintf("%.3f", input$pos_diff_warning_threshold),
+            sprintf("%.4f", input$pos_diff_warning_threshold),
             ". Interpret the PoS result with caution because it is sensitive to the heterogeneity estimation method."
           )
         )
+      } else {
+        scen_df <- scenario_data()
+        prox_msg <- get_proximity_warning(
+          df = scen_df,
+          current_value = input$current_pfs_loghr,
+          threshold = input$pos_diff_warning_threshold,
+          window_n = 2
+        )
+        
+        if (!is.null(prox_msg)) {
+          msgs <- c(msgs, prox_msg)
+        }
       }
     }
     
