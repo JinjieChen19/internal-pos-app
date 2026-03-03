@@ -7,7 +7,7 @@ library(MASS)
 
 source("R/analysis_functions.R")
 
-# Updated built-in example dataset with a bit more heterogeneity
+# Built-in example dataset
 default_hist <- data.frame(
   Study = paste0("Study_", 1:12),
   logHR_OS  = c(-0.03, -0.22, -0.08, -0.28, -0.11,  0.02, -0.19, -0.13, -0.34, -0.06, -0.17, -0.25),
@@ -18,7 +18,7 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.2"),
+  titlePanel("Internal PoS App V1.3"),
   
   sidebarLayout(
     sidebarPanel(
@@ -36,10 +36,17 @@ ui <- fluidPage(
       
       hr(),
       
+      h4("Scenario Plot Settings"),
+      numericInput("scenario_pfs_min", "Scenario min for current PFS log(HR)", value = -0.40, step = 0.01),
+      numericInput("scenario_pfs_max", "Scenario max for current PFS log(HR)", value = 0.20, step = 0.01),
+      numericInput("scenario_n", "Number of scenario points", value = 41, min = 5, step = 2),
+      
+      hr(),
+      
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
-      helpText("This version shows both REML and Method of Moments results and warns when PoS differs materially across methods.")
+      helpText("This version shows REML vs Method of Moments results and a PFS scenario curve.")
     ),
     
     mainPanel(
@@ -54,6 +61,10 @@ ui <- fluidPage(
       
       h3("Predictive Distribution for Current OS"),
       plotOutput("pred_plot", height = "380px"),
+      
+      h3("PFS Scenario Analysis"),
+      plotOutput("scenario_plot_pos", height = "380px"),
+      plotOutput("scenario_plot_diff", height = "320px"),
       
       h3("Estimated Between-study Covariance Matrix"),
       fluidRow(
@@ -82,6 +93,43 @@ server <- function(input, output, session) {
       current_rho = input$current_rho,
       success_hr_threshold = input$success_hr_threshold
     )
+  }, ignoreInit = TRUE)
+  
+  scenario_data <- eventReactive(input$run_btn, {
+    pfs_min <- input$scenario_pfs_min
+    pfs_max <- input$scenario_pfs_max
+    n_pts <- input$scenario_n
+    
+    validate(
+      need(is.numeric(pfs_min) && is.numeric(pfs_max), "Scenario range must be numeric."),
+      need(pfs_min < pfs_max, "Scenario min must be smaller than scenario max."),
+      need(n_pts >= 5, "Number of scenario points must be at least 5.")
+    )
+    
+    grid <- seq(pfs_min, pfs_max, length.out = n_pts)
+    
+    out <- lapply(grid, function(g) {
+      res <- compute_pos_both_methods(
+        hist_dat = hist_data(),
+        current_pfs_loghr = g,
+        current_os_se = input$current_os_se,
+        current_pfs_se = input$current_pfs_se,
+        current_rho = input$current_rho,
+        success_hr_threshold = input$success_hr_threshold
+      )
+      
+      reml_pos <- if (!inherits(res$reml, "app_error")) res$reml$pos else NA_real_
+      mm_pos   <- if (!inherits(res$mm, "app_error")) res$mm$pos else NA_real_
+      
+      data.frame(
+        current_pfs_loghr = g,
+        pos_reml = reml_pos,
+        pos_mm = mm_pos,
+        abs_diff = abs(reml_pos - mm_pos)
+      )
+    })
+    
+    do.call(rbind, out)
   }, ignoreInit = TRUE)
   
   output$summary_table <- renderTable({
@@ -231,16 +279,13 @@ server <- function(input, output, session) {
     res <- result()
     if (is.null(res)) return(NULL)
     
-    # Prefer REML for plotting if available, otherwise fall back to MM
     plot_res <- if (!inherits(res$reml, "app_error")) res$reml else res$mm
     if (inherits(plot_res, "app_error")) return(NULL)
     
     x_min <- min(plot_res$mean_pred - 4 * plot_res$sd_pred, plot_res$threshold_loghr - 0.5)
     x_max <- max(plot_res$mean_pred + 4 * plot_res$sd_pred, plot_res$threshold_loghr + 0.5)
     
-    df <- data.frame(
-      x = seq(x_min, x_max, length.out = 400)
-    )
+    df <- data.frame(x = seq(x_min, x_max, length.out = 400))
     df$dens <- dnorm(df$x, mean = plot_res$mean_pred, sd = plot_res$sd_pred)
     
     ggplot(df, aes(x = x, y = dens)) +
@@ -259,6 +304,61 @@ server <- function(input, output, session) {
         title = "Predictive Distribution of Current OS Effect (Plot based on REML when available)",
         x = "Current OS log(HR)",
         y = "Density"
+      ) +
+      theme_minimal(base_size = 14)
+  })
+  
+  output$scenario_plot_pos <- renderPlot({
+    df <- scenario_data()
+    if (is.null(df)) return(NULL)
+    
+    df_long <- rbind(
+      data.frame(current_pfs_loghr = df$current_pfs_loghr, PoS = df$pos_reml, Method = "REML"),
+      data.frame(current_pfs_loghr = df$current_pfs_loghr, PoS = df$pos_mm, Method = "Method of Moments")
+    )
+    
+    ggplot(df_long, aes(x = current_pfs_loghr, y = PoS, linetype = Method)) +
+      geom_line(linewidth = 1) +
+      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted") +
+      annotate(
+        "text",
+        x = input$current_pfs_loghr,
+        y = 0.05,
+        label = "Current input",
+        angle = 90,
+        vjust = -0.5,
+        size = 4
+      ) +
+      labs(
+        title = "PoS vs Current-Study PFS log(HR)",
+        x = "Current-study PFS log(HR)",
+        y = "PoS"
+      ) +
+      coord_cartesian(ylim = c(0, 1)) +
+      theme_minimal(base_size = 14)
+  })
+  
+  output$scenario_plot_diff <- renderPlot({
+    df <- scenario_data()
+    if (is.null(df)) return(NULL)
+    
+    ggplot(df, aes(x = current_pfs_loghr, y = abs_diff)) +
+      geom_line(linewidth = 1) +
+      geom_hline(yintercept = input$pos_diff_warning_threshold, linetype = "dashed") +
+      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted") +
+      annotate(
+        "text",
+        x = input$current_pfs_loghr,
+        y = max(df$abs_diff, na.rm = TRUE) * 0.9,
+        label = "Current input",
+        angle = 90,
+        vjust = -0.5,
+        size = 4
+      ) +
+      labs(
+        title = "Absolute PoS Difference: REML vs MM",
+        x = "Current-study PFS log(HR)",
+        y = "|PoS(REML) - PoS(MM)|"
       ) +
       theme_minimal(base_size = 14)
   })
