@@ -17,6 +17,20 @@ default_hist <- data.frame(
   R_WITHIN  = c(0.45, 0.55, 0.40, 0.60, 0.50, 0.35, 0.58, 0.48, 0.62, 0.42, 0.50, 0.57)
 )
 
+example_template_hist <- data.frame(
+  Study = paste0("Study_", sprintf("%02d", 1:20)),
+  logHR_OS  = c(-0.05, -0.18, -0.09, -0.25, -0.11,  0.01, -0.20, -0.13, -0.31, -0.07,
+                -0.16, -0.23, -0.02, -0.21, -0.10, -0.28, -0.14,  0.03, -0.26, -0.08),
+  logHR_PFS = c(-0.12, -0.30, -0.20, -0.38, -0.24, -0.05, -0.29, -0.16, -0.47, -0.11,
+                -0.25, -0.34, -0.09, -0.33, -0.18, -0.41, -0.22, -0.02, -0.36, -0.15),
+  SE_OS     = c(0.14, 0.11, 0.15, 0.10, 0.14, 0.17, 0.12, 0.14, 0.11, 0.16,
+                0.13, 0.12, 0.15, 0.11, 0.14, 0.10, 0.13, 0.18, 0.11, 0.15),
+  SE_PFS    = c(0.12, 0.09, 0.12, 0.08, 0.10, 0.14, 0.10, 0.12, 0.09, 0.13,
+                0.10, 0.10, 0.13, 0.09, 0.11, 0.08, 0.10, 0.15, 0.09, 0.12),
+  R_WITHIN  = c(0.45, 0.52, 0.40, 0.60, 0.48, 0.35, 0.58, 0.46, 0.63, 0.42,
+                0.50, 0.57, 0.39, 0.55, 0.44, 0.61, 0.49, 0.32, 0.59, 0.43)
+)
+
 ui <- fluidPage(
   titlePanel("Internal PoS App V1.7"),
   
@@ -24,6 +38,7 @@ ui <- fluidPage(
     sidebarPanel(
       h4("Historical Data Input"),
       fileInput("hist_csv", "Upload historical studies CSV", accept = c(".csv")),
+      downloadButton("download_example_template", "Download Example CSV Template"),
       checkboxInput("use_example_if_no_upload", "Use built-in example data if no CSV uploaded", value = TRUE),
       br(),
       tags$small("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN"),
@@ -524,18 +539,18 @@ server <- function(input, output, session) {
           ),
           Value = c(
             data_source_label(),
-            round(input$current_pfs_loghr, 6),
-            round(input$current_os_se, 6),
-            round(input$current_pfs_se, 6),
-            round(input$current_rho, 6),
-            round(input$success_hr_threshold, 6),
-            round(res$reml$pos, 6),
-            round(res$reml$mean_pred, 6),
-            round(res$reml$sd_pred, 6),
-            round(res$mm$pos, 6),
-            round(res$mm$mean_pred, 6),
-            round(res$mm$sd_pred, 6),
-            round(pos_diff, 6),
+            round(input$current_pfs_loghr, 4),
+            round(input$current_os_se, 4),
+            round(input$current_pfs_se, 4),
+            round(input$current_rho, 4),
+            round(input$success_hr_threshold, 4),
+            round(res$reml$pos, 4),
+            round(res$reml$mean_pred, 4),
+            round(res$reml$sd_pred, 4),
+            round(res$mm$pos, 4),
+            round(res$mm$mean_pred, 4),
+            round(res$mm$sd_pred, 4),
+            round(pos_diff, 4),
             material_flag
           ),
           stringsAsFactors = FALSE
@@ -569,6 +584,17 @@ server <- function(input, output, session) {
       write.csv(out, file, row.names = FALSE)
     }
   )
+  
+  output$download_example_template <- downloadHandler(
+    filename = function() {
+      paste0("example_historical_data_template_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      write.csv(example_template_hist, file, row.names = FALSE)
+    }
+  )
+  
+  
 }
 
 shinyApp(ui, server)
