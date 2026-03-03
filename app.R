@@ -18,7 +18,7 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.1"),
+  titlePanel("Internal PoS App V1.2"),
   
   sidebarLayout(
     sidebarPanel(
@@ -32,18 +32,22 @@ ui <- fluidPage(
       
       h4("Analysis Settings"),
       numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 1.00, min = 0.01, step = 0.01),
+      numericInput("pos_diff_warning_threshold", "Warning threshold for |PoS(REML) - PoS(MM)|", value = 0.05, min = 0, step = 0.01),
       
       hr(),
       
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
-      helpText("This version shows both REML and Method of Moments results for internal comparison.")
+      helpText("This version shows both REML and Method of Moments results and warns when PoS differs materially across methods.")
     ),
     
     mainPanel(
       h3("Main Results"),
       tableOutput("summary_table"),
+      
+      h3("Method Comparison"),
+      tableOutput("comparison_table"),
       
       h3("Warnings"),
       uiOutput("warning_box"),
@@ -112,6 +116,39 @@ server <- function(input, output, session) {
     )
   })
   
+  output$comparison_table <- renderTable({
+    res <- result()
+    if (is.null(res)) return(NULL)
+    
+    if (inherits(res$reml, "app_error") || inherits(res$mm, "app_error")) {
+      return(data.frame(
+        Metric = "Absolute PoS Difference",
+        Value = NA,
+        Interpretation = "Unavailable because at least one method failed.",
+        stringsAsFactors = FALSE
+      ))
+    }
+    
+    pos_diff <- abs(res$reml$pos - res$mm$pos)
+    
+    interpretation <- if (pos_diff > input$pos_diff_warning_threshold) {
+      "Material difference across methods"
+    } else {
+      "Difference not material"
+    }
+    
+    data.frame(
+      Metric = c("Absolute PoS Difference", "REML PoS", "MM PoS"),
+      Value = c(round(pos_diff, 3), round(res$reml$pos, 3), round(res$mm$pos, 3)),
+      Interpretation = c(
+        interpretation,
+        "Primary analysis",
+        "Sensitivity analysis"
+      ),
+      stringsAsFactors = FALSE
+    )
+  })
+  
   output$warning_box <- renderUI({
     res <- result()
     if (is.null(res)) return(NULL)
@@ -128,6 +165,23 @@ server <- function(input, output, session) {
     
     msgs <- c(msgs, collect_msgs(res$reml, "REML"))
     msgs <- c(msgs, collect_msgs(res$mm, "Method of Moments"))
+    
+    if (!inherits(res$reml, "app_error") && !inherits(res$mm, "app_error")) {
+      pos_diff <- abs(res$reml$pos - res$mm$pos)
+      if (pos_diff > input$pos_diff_warning_threshold) {
+        msgs <- c(
+          msgs,
+          paste0(
+            "Method sensitivity warning: |PoS(REML) - PoS(MM)| = ",
+            sprintf("%.3f", pos_diff),
+            ", which exceeds the warning threshold of ",
+            sprintf("%.3f", input$pos_diff_warning_threshold),
+            ". Interpret the PoS result with caution because it is sensitive to the heterogeneity estimation method."
+          )
+        )
+      }
+    }
+    
     msgs <- unique(msgs)
     
     if (length(msgs) == 0) {
