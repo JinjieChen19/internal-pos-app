@@ -1,9 +1,8 @@
 # app.R
 
-
-
 library(shiny)
 library(ggplot2)
+
 library(mvmeta)
 library(MASS)
 
@@ -20,7 +19,7 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.5"),
+  titlePanel("Internal PoS App V1.6"),
   
   sidebarLayout(
     sidebarPanel(
@@ -56,6 +55,11 @@ ui <- fluidPage(
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
+      downloadButton("download_summary_text", "Download Summary Text"),
+      br(), br(),
+      downloadButton("download_summary_csv", "Download Summary CSV"),
+      
+      br(), br(),
       helpText("If no CSV is uploaded, the app can use the built-in example dataset.")
     ),
     
@@ -191,11 +195,7 @@ server <- function(input, output, session) {
     do.call(rbind, out)
   }, ignoreInit = TRUE)
   
-  output$data_source_text <- renderText({
-    data_source_label()
-  })
-  
-  output$auto_summary <- renderText({
+  auto_summary_text <- reactive({
     res <- result()
     if (is.null(res)) return("Run the analysis to generate an automatic summary.")
     
@@ -237,6 +237,14 @@ server <- function(input, output, session) {
       ". ",
       interpretation_text
     )
+  })
+  
+  output$data_source_text <- renderText({
+    data_source_label()
+  })
+  
+  output$auto_summary <- renderText({
+    auto_summary_text()
   })
   
   output$summary_table <- renderTable({
@@ -469,6 +477,73 @@ server <- function(input, output, session) {
       ) +
       theme_minimal(base_size = 14)
   })
+  
+  output$download_summary_text <- downloadHandler(
+    filename = function() {
+      paste0("pos_summary_", Sys.Date(), ".txt")
+    },
+    content = function(file) {
+      writeLines(auto_summary_text(), con = file)
+    }
+  )
+  
+  output$download_summary_csv <- downloadHandler(
+    filename = function() {
+      paste0("pos_summary_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      res <- result()
+      
+      if (is.null(res) || inherits(res$reml, "app_error") || inherits(res$mm, "app_error")) {
+        out <- data.frame(
+          Metric = c("Status"),
+          Value = c("Summary unavailable because analysis did not complete successfully."),
+          stringsAsFactors = FALSE
+        )
+      } else {
+        pos_diff <- abs(res$reml$pos - res$mm$pos)
+        material_flag <- ifelse(pos_diff > input$pos_diff_warning_threshold, "Yes", "No")
+        
+        out <- data.frame(
+          Metric = c(
+            "Data source",
+            "Current PFS log(HR)",
+            "Current OS SE",
+            "Current PFS SE",
+            "Current within-study correlation",
+            "Success HR threshold",
+            "REML PoS",
+            "REML predicted OS log(HR)",
+            "REML predictive SD",
+            "MM PoS",
+            "MM predicted OS log(HR)",
+            "MM predictive SD",
+            "Absolute PoS difference",
+            "Material method sensitivity"
+          ),
+          Value = c(
+            data_source_label(),
+            round(input$current_pfs_loghr, 6),
+            round(input$current_os_se, 6),
+            round(input$current_pfs_se, 6),
+            round(input$current_rho, 6),
+            round(input$success_hr_threshold, 6),
+            round(res$reml$pos, 6),
+            round(res$reml$mean_pred, 6),
+            round(res$reml$sd_pred, 6),
+            round(res$mm$pos, 6),
+            round(res$mm$mean_pred, 6),
+            round(res$mm$sd_pred, 6),
+            round(pos_diff, 6),
+            material_flag
+          ),
+          stringsAsFactors = FALSE
+        )
+      }
+      
+      write.csv(out, file, row.names = FALSE)
+    }
+  )
 }
 
 shinyApp(ui, server)
