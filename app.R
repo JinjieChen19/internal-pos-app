@@ -83,6 +83,18 @@ ui <- fluidPage(
       h3("Data Source"),
       textOutput("data_source_text"),
       
+      h3("Help / Input Guide"),
+      tags$div(
+        style = "background-color: #f8f9fa; padding: 14px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 18px;",
+        tags$ul(
+          tags$li("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN."),
+          tags$li("SE_OS and SE_PFS must be > 0; R_WITHIN must be between -1 and 1."),
+          tags$li("REML is used as the primary analysis; MM (Moments Method) is shown as a sensitivity analysis."),
+          tags$li("If |PoS(REML) - PoS(MM)| exceeds the warning threshold, interpret the result with caution."),
+          tags$li("More negative log(HR) generally indicates a more favorable treatment effect.")
+        )
+      ),
+      
       h3("Auto Summary"),
       verbatimTextOutput("auto_summary"),
       
