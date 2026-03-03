@@ -1,6 +1,13 @@
-.DS_Store
 .Rhistory
 .RData
 .Rproj.user/
 .Ruserdata
 *.Rproj
+.DS_Store
+
+# Local outputs
+outputs/*.csv
+outputs/*.txt
+outputs/*.png
+outputs/*.pdf
+!outputs/.gitkeep
