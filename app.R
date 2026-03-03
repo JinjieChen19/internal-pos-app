@@ -2,7 +2,6 @@
 
 library(shiny)
 library(ggplot2)
-
 library(mvmeta)
 library(MASS)
 
@@ -19,7 +18,7 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.6"),
+  titlePanel("Internal PoS App V1.7"),
   
   sidebarLayout(
     sidebarPanel(
@@ -58,6 +57,8 @@ ui <- fluidPage(
       downloadButton("download_summary_text", "Download Summary Text"),
       br(), br(),
       downloadButton("download_summary_csv", "Download Summary CSV"),
+      br(), br(),
+      downloadButton("download_scenario_csv", "Download Scenario CSV"),
       
       br(), br(),
       helpText("If no CSV is uploaded, the app can use the built-in example dataset.")
@@ -539,6 +540,26 @@ server <- function(input, output, session) {
           ),
           stringsAsFactors = FALSE
         )
+      }
+      
+      write.csv(out, file, row.names = FALSE)
+    }
+  )
+  
+  output$download_scenario_csv <- downloadHandler(
+    filename = function() {
+      paste0("pos_scenario_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      df <- scenario_data()
+      
+      if (is.null(df) || nrow(df) == 0) {
+        out <- data.frame(
+          Status = "Scenario data unavailable. Please run the analysis first.",
+          stringsAsFactors = FALSE
+        )
+      } else {
+        out <- df
       }
       
       write.csv(out, file, row.names = FALSE)
