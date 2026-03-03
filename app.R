@@ -20,10 +20,18 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.3"),
+  titlePanel("Internal PoS App V1.4"),
   
   sidebarLayout(
     sidebarPanel(
+      h4("Historical Data Input"),
+      fileInput("hist_csv", "Upload historical studies CSV", accept = c(".csv")),
+      checkboxInput("use_example_if_no_upload", "Use built-in example data if no CSV uploaded", value = TRUE),
+      br(),
+      tags$small("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN"),
+      
+      hr(),
+      
       h4("Current Study Inputs"),
       numericInput("current_pfs_loghr", "Current study PFS log(HR)", value = -0.22, step = 0.01),
       numericInput("current_os_se", "Current study OS SE", value = 0.12, min = 0.001, step = 0.01),
@@ -33,7 +41,7 @@ ui <- fluidPage(
       hr(),
       
       h4("Analysis Settings"),
-      numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 1.00, min = 0.01, step = 0.01),
+      numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 0.80, min = 0.01, step = 0.01),
       numericInput("pos_diff_warning_threshold", "Warning threshold for |PoS(REML) - PoS(MM)|", value = 0.05, min = 0, step = 0.01),
       
       hr(),
@@ -48,10 +56,13 @@ ui <- fluidPage(
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
-      helpText("This version shows REML vs Method of Moments results and a PFS scenario curve.")
+      helpText("If no CSV is uploaded, the app can use the built-in example dataset.")
     ),
     
     mainPanel(
+      h3("Data Source"),
+      textOutput("data_source_text"),
+      
       h3("Main Results"),
       tableOutput("summary_table"),
       
@@ -83,7 +94,54 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   hist_data <- reactive({
-    default_hist
+    # Case 1: uploaded CSV
+    if (!is.null(input$hist_csv)) {
+      dat <- tryCatch(
+        read.csv(input$hist_csv$datapath, stringsAsFactors = FALSE, check.names = FALSE),
+        error = function(e) e
+      )
+      
+      if (inherits(dat, "error")) {
+        stop(paste("Failed to read uploaded CSV:", dat$message))
+      }
+      
+      required_cols <- c("Study", "logHR_OS", "logHR_PFS", "SE_OS", "SE_PFS", "R_WITHIN")
+      missing_cols <- setdiff(required_cols, names(dat))
+      if (length(missing_cols) > 0) {
+        stop(
+          paste0(
+            "Uploaded CSV is missing required columns: ",
+            paste(missing_cols, collapse = ", ")
+          )
+        )
+      }
+      
+      # Coerce numeric columns
+      num_cols <- c("logHR_OS", "logHR_PFS", "SE_OS", "SE_PFS", "R_WITHIN")
+      for (col in num_cols) {
+        dat[[col]] <- suppressWarnings(as.numeric(dat[[col]]))
+      }
+      
+      return(dat[, required_cols])
+    }
+    
+    # Case 2: no upload, use example if allowed
+    if (isTRUE(input$use_example_if_no_upload)) {
+      return(default_hist)
+    }
+    
+    # Case 3: no upload and example disabled
+    stop("No historical dataset available. Please upload a CSV or enable the built-in example data.")
+  })
+  
+  data_source_label <- reactive({
+    if (!is.null(input$hist_csv)) {
+      paste("Using uploaded CSV:", input$hist_csv$name)
+    } else if (isTRUE(input$use_example_if_no_upload)) {
+      "Using built-in example dataset"
+    } else {
+      "No dataset loaded"
+    }
   })
   
   result <- eventReactive(input$run_btn, {
@@ -133,6 +191,10 @@ server <- function(input, output, session) {
     
     do.call(rbind, out)
   }, ignoreInit = TRUE)
+  
+  output$data_source_text <- renderText({
+    data_source_label()
+  })
   
   output$summary_table <- renderTable({
     res <- result()
