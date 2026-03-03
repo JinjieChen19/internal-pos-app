@@ -1,6 +1,6 @@
 # R/analysis_functions.R
 
-# Core analysis functions for a minimal internal PoS Shiny app
+# Core analysis functions for internal PoS Shiny app
 # Statistical approach:
 # - Historical studies provide OS/PFS treatment effects and within-study covariance
 # - Fit bivariate meta-analysis using mvmeta
@@ -76,6 +76,18 @@ validate_hist_data <- function(hist_dat) {
   invisible(TRUE)
 }
 
+is_near_zero_matrix <- function(mat, abs_tol = 1e-4, fro_tol = 1e-4) {
+  if (is.null(mat)) return(TRUE)
+  vals <- as.numeric(mat)
+  vals <- vals[is.finite(vals)]
+  if (length(vals) == 0) return(TRUE)
+  
+  max_abs <- max(abs(vals))
+  frob <- sqrt(sum(vals^2))
+  
+  (max_abs < abs_tol) || (frob < fro_tol)
+}
+
 compute_pos <- function(
     hist_dat,
     current_pfs_loghr,
@@ -89,7 +101,6 @@ compute_pos <- function(
   
   validate_hist_data(hist_dat)
   
-  # Validate current-study inputs
   if (!is.numeric(current_pfs_loghr) || length(current_pfs_loghr) != 1 || is.na(current_pfs_loghr)) {
     stop("current_pfs_loghr must be a single numeric value.")
   }
@@ -110,11 +121,9 @@ compute_pos <- function(
   
   warning_messages <- character(0)
   
-  # Historical outcomes
   y_hist <- as.matrix(hist_dat[, c("logHR_OS", "logHR_PFS")])
   colnames(y_hist) <- c("logHR_OS", "logHR_PFS")
   
-  # Historical within-study covariance matrices
   S_hist <- lapply(seq_len(nrow(hist_dat)), function(i) {
     make_cov(
       sd1 = hist_dat$SE_OS[i],
@@ -123,11 +132,8 @@ compute_pos <- function(
     )
   })
   
-  # Fit bivariate meta-analysis
   fit <- tryCatch(
-    {
-      mvmeta::mvmeta(y_hist, S = S_hist, method = method)
-    },
+    mvmeta::mvmeta(y_hist, S = S_hist, method = method),
     error = function(e) {
       stop(paste("mvmeta model fitting failed:", e$message))
     }
@@ -148,11 +154,11 @@ compute_pos <- function(
     stop("Failed to extract estimated between-study covariance matrix (Psi).")
   }
   
-  # Warnings on boundary / unstable estimates
-  if (max(abs(Sigma0_hat)) < 1e-6) {
+  # More robust warning for near-zero heterogeneity
+  if (is_near_zero_matrix(Sigma0_hat, abs_tol = 5e-4, fro_tol = 8e-4)) {
     warning_messages <- c(
       warning_messages,
-      "Estimated between-study covariance matrix is approximately zero. Historical heterogeneity may be weak, sample size may be limited, or the estimate may be on the boundary."
+      "Estimated between-study covariance matrix is approximately zero or very close to the boundary. Predictive uncertainty may be underestimated, and PoS may appear overly stable."
     )
   }
   
@@ -163,22 +169,18 @@ compute_pos <- function(
     )
   }
   
-  # Current-study within-study covariance
   S_current <- make_cov(
     sd1 = current_os_se,
     sd2 = current_pfs_se,
     rho = current_rho
   )
   
-  # Predictive covariance around historical mean
   Sigma_cur <- Sigma0_hat + S_current
   
-  # Check positive variance structure
-  if (Sigma_cur[2, 2] <= 0) {
+  if (!is.finite(Sigma_cur[2, 2]) || Sigma_cur[2, 2] <= 0) {
     stop("Computed predictive variance for current-study PFS is non-positive. Please check inputs.")
   }
   
-  # Closed-form conditional normal relationship
   h <- Sigma_cur[1, 2] / Sigma_cur[2, 2]
   v_cond <- Sigma_cur[1, 1] - (Sigma_cur[1, 2]^2 / Sigma_cur[2, 2])
   
@@ -186,7 +188,6 @@ compute_pos <- function(
     stop("Computed conditional predictive variance for current-study OS is non-positive or invalid.")
   }
   
-  # Integrate over uncertainty in estimated historical mean effect
   a <- c(1, -h)
   mean_pred <- eta_hat[1] + h * (current_pfs_loghr - eta_hat[2])
   var_pred <- as.numeric(t(a) %*% V_eta %*% a + v_cond)
@@ -207,11 +208,12 @@ compute_pos <- function(
   if (pos < 0.05 || pos > 0.95) {
     warning_messages <- c(
       warning_messages,
-      "PoS is very close to 0 or 1. Check whether the result is driven by strong data support or by restrictive assumptions."
+      "PoS is very close to 0 or 1. Check whether this is driven by strong data support or by restrictive modeling assumptions."
     )
   }
   
   list(
+    method = method,
     pos = pos,
     mean_pred = mean_pred,
     sd_pred = sd_pred,
@@ -221,4 +223,41 @@ compute_pos <- function(
     warning_messages = unique(warning_messages),
     fit = fit
   )
+}
+
+compute_pos_both_methods <- function(
+    hist_dat,
+    current_pfs_loghr,
+    current_os_se,
+    current_pfs_se,
+    current_rho,
+    success_hr_threshold = 1.0
+) {
+  res_reml <- tryCatch(
+    compute_pos(
+      hist_dat = hist_dat,
+      current_pfs_loghr = current_pfs_loghr,
+      current_os_se = current_os_se,
+      current_pfs_se = current_pfs_se,
+      current_rho = current_rho,
+      method = "reml",
+      success_hr_threshold = success_hr_threshold
+    ),
+    error = function(e) structure(list(error_message = e$message), class = "app_error")
+  )
+  
+  res_mm <- tryCatch(
+    compute_pos(
+      hist_dat = hist_dat,
+      current_pfs_loghr = current_pfs_loghr,
+      current_os_se = current_os_se,
+      current_pfs_se = current_pfs_se,
+      current_rho = current_rho,
+      method = "mm",
+      success_hr_threshold = success_hr_threshold
+    ),
+    error = function(e) structure(list(error_message = e$message), class = "app_error")
+  )
+  
+  list(reml = res_reml, mm = res_mm)
 }

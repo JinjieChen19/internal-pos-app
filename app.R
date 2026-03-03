@@ -7,18 +7,18 @@ library(MASS)
 
 source("R/analysis_functions.R")
 
-# More realistic built-in example dataset than the earlier toy version
+# Updated built-in example dataset with a bit more heterogeneity
 default_hist <- data.frame(
-  Study = paste0("Study_", 1:10),
-  logHR_OS  = c(-0.05, -0.18, -0.09, -0.25, -0.12, -0.02, -0.21, -0.14, -0.30, -0.08),
-  logHR_PFS = c(-0.12, -0.34, -0.20, -0.40, -0.24, -0.10, -0.31, -0.19, -0.45, -0.16),
-  SE_OS     = c(0.13, 0.11, 0.15, 0.10, 0.14, 0.16, 0.12, 0.13, 0.11, 0.15),
-  SE_PFS    = c(0.11, 0.09, 0.12, 0.08, 0.10, 0.13, 0.10, 0.11, 0.09, 0.12),
-  R_WITHIN  = c(0.50, 0.50, 0.45, 0.55, 0.50, 0.40, 0.60, 0.50, 0.55, 0.45)
+  Study = paste0("Study_", 1:12),
+  logHR_OS  = c(-0.03, -0.22, -0.08, -0.28, -0.11,  0.02, -0.19, -0.13, -0.34, -0.06, -0.17, -0.25),
+  logHR_PFS = c(-0.10, -0.37, -0.18, -0.44, -0.23, -0.02, -0.29, -0.16, -0.49, -0.11, -0.26, -0.35),
+  SE_OS     = c(0.14, 0.11, 0.16, 0.10, 0.15, 0.17, 0.12, 0.14, 0.11, 0.16, 0.13, 0.12),
+  SE_PFS    = c(0.12, 0.09, 0.13, 0.08, 0.11, 0.14, 0.10, 0.12, 0.09, 0.13, 0.10, 0.10),
+  R_WITHIN  = c(0.45, 0.55, 0.40, 0.60, 0.50, 0.35, 0.58, 0.48, 0.62, 0.42, 0.50, 0.57)
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1"),
+  titlePanel("Internal PoS App V1.1"),
   
   sidebarLayout(
     sidebarPanel(
@@ -31,12 +31,6 @@ ui <- fluidPage(
       hr(),
       
       h4("Analysis Settings"),
-      selectInput(
-        "method",
-        "Between-study covariance estimator",
-        choices = c("REML" = "reml", "Method of Moments" = "mm"),
-        selected = "reml"
-      ),
       numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 1.00, min = 0.01, step = 0.01),
       
       hr(),
@@ -44,60 +38,24 @@ ui <- fluidPage(
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
-      helpText("This V1 app uses a built-in example historical dataset.")
+      helpText("This version shows both REML and Method of Moments results for internal comparison.")
     ),
     
     mainPanel(
       h3("Main Results"),
-      fluidRow(
-        column(
-          width = 4,
-          wellPanel(
-            h4("PoS"),
-            textOutput("pos_text")
-          )
-        ),
-        column(
-          width = 4,
-          wellPanel(
-            h4("Predicted Current OS log(HR)"),
-            textOutput("mean_text")
-          )
-        ),
-        column(
-          width = 4,
-          wellPanel(
-            h4("Predictive SD"),
-            textOutput("sd_text")
-          )
-        )
-      ),
-      
-      fluidRow(
-        column(
-          width = 6,
-          wellPanel(
-            h4("Threshold"),
-            textOutput("threshold_text")
-          )
-        ),
-        column(
-          width = 6,
-          wellPanel(
-            h4("Estimated Historical Mean Effects"),
-            tableOutput("eta_table")
-          )
-        )
-      ),
+      tableOutput("summary_table"),
       
       h3("Warnings"),
       uiOutput("warning_box"),
       
       h3("Predictive Distribution for Current OS"),
-      plotOutput("pred_plot", height = "360px"),
+      plotOutput("pred_plot", height = "380px"),
       
       h3("Estimated Between-study Covariance Matrix"),
-      tableOutput("psi_table"),
+      fluidRow(
+        column(6, h4("REML"), tableOutput("psi_table_reml")),
+        column(6, h4("Method of Moments"), tableOutput("psi_table_mm"))
+      ),
       
       h3("Historical Data Used"),
       tableOutput("hist_table")
@@ -112,78 +70,67 @@ server <- function(input, output, session) {
   })
   
   result <- eventReactive(input$run_btn, {
-    tryCatch(
-      {
-        compute_pos(
-          hist_dat = hist_data(),
-          current_pfs_loghr = input$current_pfs_loghr,
-          current_os_se = input$current_os_se,
-          current_pfs_se = input$current_pfs_se,
-          current_rho = input$current_rho,
-          method = input$method,
-          success_hr_threshold = input$success_hr_threshold
-        )
-      },
-      error = function(e) {
-        structure(list(error_message = e$message), class = "app_error")
-      }
+    compute_pos_both_methods(
+      hist_dat = hist_data(),
+      current_pfs_loghr = input$current_pfs_loghr,
+      current_os_se = input$current_os_se,
+      current_pfs_se = input$current_pfs_se,
+      current_rho = input$current_rho,
+      success_hr_threshold = input$success_hr_threshold
     )
   }, ignoreInit = TRUE)
   
-  output$pos_text <- renderText({
+  output$summary_table <- renderTable({
     res <- result()
-    if (inherits(res, "app_error")) return("N/A")
-    sprintf("%.3f", res$pos)
-  })
-  
-  output$mean_text <- renderText({
-    res <- result()
-    if (inherits(res, "app_error")) return("N/A")
-    sprintf("%.3f", res$mean_pred)
-  })
-  
-  output$sd_text <- renderText({
-    res <- result()
-    if (inherits(res, "app_error")) return("N/A")
-    sprintf("%.3f", res$sd_pred)
-  })
-  
-  output$threshold_text <- renderText({
-    res <- result()
-    if (inherits(res, "app_error")) return("N/A")
-    sprintf(
-      "HR threshold = %.3f; log(HR) threshold = %.3f",
-      input$success_hr_threshold,
-      res$threshold_loghr
-    )
-  })
-  
-  output$eta_table <- renderTable({
-    res <- result()
-    if (inherits(res, "app_error")) return(NULL)
+    if (is.null(res)) return(NULL)
     
-    data.frame(
-      Parameter = c("Mean log(HR)_OS", "Mean log(HR)_PFS"),
-      Estimate = round(res$eta_hat, 4)
+    get_row <- function(x, label) {
+      if (inherits(x, "app_error")) {
+        return(data.frame(
+          Method = label,
+          PoS = NA,
+          Predicted_OS_logHR = NA,
+          Predictive_SD = NA,
+          Status = paste("Error:", x$error_message),
+          stringsAsFactors = FALSE
+        ))
+      }
+      
+      data.frame(
+        Method = label,
+        PoS = round(x$pos, 3),
+        Predicted_OS_logHR = round(x$mean_pred, 3),
+        Predictive_SD = round(x$sd_pred, 3),
+        Status = "OK",
+        stringsAsFactors = FALSE
+      )
+    }
+    
+    rbind(
+      get_row(res$reml, "REML"),
+      get_row(res$mm, "Method of Moments")
     )
   })
   
   output$warning_box <- renderUI({
     res <- result()
-    
     if (is.null(res)) return(NULL)
     
-    if (inherits(res, "app_error")) {
-      return(
-        div(
-          style = "color: #842029; background-color: #f8d7da; padding: 12px; border-radius: 6px; border: 1px solid #f5c2c7;",
-          strong("Error: "),
-          res$error_message
-        )
-      )
+    msgs <- character(0)
+    
+    collect_msgs <- function(x, label) {
+      if (inherits(x, "app_error")) {
+        return(paste0(label, ": ", x$error_message))
+      }
+      if (length(x$warning_messages) == 0) return(character(0))
+      paste0(label, ": ", x$warning_messages)
     }
     
-    if (length(res$warning_messages) == 0) {
+    msgs <- c(msgs, collect_msgs(res$reml, "REML"))
+    msgs <- c(msgs, collect_msgs(res$mm, "Method of Moments"))
+    msgs <- unique(msgs)
+    
+    if (length(msgs) == 0) {
       return(
         div(
           style = "color: #0f5132; background-color: #d1e7dd; padding: 12px; border-radius: 6px; border: 1px solid #badbcc;",
@@ -193,7 +140,7 @@ server <- function(input, output, session) {
     }
     
     tagList(
-      lapply(res$warning_messages, function(msg) {
+      lapply(msgs, function(msg) {
         div(
           style = "color: #664d03; background-color: #fff3cd; padding: 12px; border-radius: 6px; border: 1px solid #ffecb5; margin-bottom: 8px;",
           msg
@@ -202,11 +149,21 @@ server <- function(input, output, session) {
     )
   })
   
-  output$psi_table <- renderTable({
+  output$psi_table_reml <- renderTable({
     res <- result()
-    if (inherits(res, "app_error")) return(NULL)
+    if (is.null(res) || inherits(res$reml, "app_error")) return(NULL)
     
-    psi <- round(res$Sigma0_hat, 4)
+    psi <- round(res$reml$Sigma0_hat, 4)
+    rownames(psi) <- c("logHR_OS", "logHR_PFS")
+    colnames(psi) <- c("logHR_OS", "logHR_PFS")
+    psi
+  }, rownames = TRUE)
+  
+  output$psi_table_mm <- renderTable({
+    res <- result()
+    if (is.null(res) || inherits(res$mm, "app_error")) return(NULL)
+    
+    psi <- round(res$mm$Sigma0_hat, 4)
     rownames(psi) <- c("logHR_OS", "logHR_PFS")
     colnames(psi) <- c("logHR_OS", "logHR_PFS")
     psi
@@ -218,22 +175,26 @@ server <- function(input, output, session) {
   
   output$pred_plot <- renderPlot({
     res <- result()
-    if (inherits(res, "app_error")) return(NULL)
+    if (is.null(res)) return(NULL)
     
-    x_min <- min(res$mean_pred - 4 * res$sd_pred, res$threshold_loghr - 0.5)
-    x_max <- max(res$mean_pred + 4 * res$sd_pred, res$threshold_loghr + 0.5)
+    # Prefer REML for plotting if available, otherwise fall back to MM
+    plot_res <- if (!inherits(res$reml, "app_error")) res$reml else res$mm
+    if (inherits(plot_res, "app_error")) return(NULL)
+    
+    x_min <- min(plot_res$mean_pred - 4 * plot_res$sd_pred, plot_res$threshold_loghr - 0.5)
+    x_max <- max(plot_res$mean_pred + 4 * plot_res$sd_pred, plot_res$threshold_loghr + 0.5)
     
     df <- data.frame(
       x = seq(x_min, x_max, length.out = 400)
     )
-    df$dens <- dnorm(df$x, mean = res$mean_pred, sd = res$sd_pred)
+    df$dens <- dnorm(df$x, mean = plot_res$mean_pred, sd = plot_res$sd_pred)
     
     ggplot(df, aes(x = x, y = dens)) +
       geom_line(linewidth = 1) +
-      geom_vline(xintercept = res$threshold_loghr, linetype = "dashed") +
+      geom_vline(xintercept = plot_res$threshold_loghr, linetype = "dashed") +
       annotate(
         "text",
-        x = res$threshold_loghr,
+        x = plot_res$threshold_loghr,
         y = max(df$dens) * 0.9,
         label = "Success threshold",
         angle = 90,
@@ -241,7 +202,7 @@ server <- function(input, output, session) {
         size = 4
       ) +
       labs(
-        title = "Predictive Distribution of Current OS Effect",
+        title = "Predictive Distribution of Current OS Effect (Plot based on REML when available)",
         x = "Current OS log(HR)",
         y = "Density"
       ) +
