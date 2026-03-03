@@ -560,6 +560,10 @@ server <- function(input, output, session) {
         )
       } else {
         out <- df
+        out$current_pfs_loghr <- round(out$current_pfs_loghr, 4)
+        out$pos_reml <- round(out$pos_reml, 4)
+        out$pos_mm <- round(out$pos_mm, 4)
+        out$abs_diff <- round(out$abs_diff, 4)
       }
       
       write.csv(out, file, row.names = FALSE)
