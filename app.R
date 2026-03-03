@@ -1,6 +1,6 @@
 # app.R
 
-# test git pane
+
 
 library(shiny)
 library(ggplot2)
@@ -20,7 +20,7 @@ default_hist <- data.frame(
 )
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.4"),
+  titlePanel("Internal PoS App V1.5"),
   
   sidebarLayout(
     sidebarPanel(
@@ -63,6 +63,9 @@ ui <- fluidPage(
       h3("Data Source"),
       textOutput("data_source_text"),
       
+      h3("Auto Summary"),
+      verbatimTextOutput("auto_summary"),
+      
       h3("Main Results"),
       tableOutput("summary_table"),
       
@@ -94,7 +97,6 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   hist_data <- reactive({
-    # Case 1: uploaded CSV
     if (!is.null(input$hist_csv)) {
       dat <- tryCatch(
         read.csv(input$hist_csv$datapath, stringsAsFactors = FALSE, check.names = FALSE),
@@ -116,7 +118,6 @@ server <- function(input, output, session) {
         )
       }
       
-      # Coerce numeric columns
       num_cols <- c("logHR_OS", "logHR_PFS", "SE_OS", "SE_PFS", "R_WITHIN")
       for (col in num_cols) {
         dat[[col]] <- suppressWarnings(as.numeric(dat[[col]]))
@@ -125,12 +126,10 @@ server <- function(input, output, session) {
       return(dat[, required_cols])
     }
     
-    # Case 2: no upload, use example if allowed
     if (isTRUE(input$use_example_if_no_upload)) {
       return(default_hist)
     }
     
-    # Case 3: no upload and example disabled
     stop("No historical dataset available. Please upload a CSV or enable the built-in example data.")
   })
   
@@ -194,6 +193,50 @@ server <- function(input, output, session) {
   
   output$data_source_text <- renderText({
     data_source_label()
+  })
+  
+  output$auto_summary <- renderText({
+    res <- result()
+    if (is.null(res)) return("Run the analysis to generate an automatic summary.")
+    
+    if (inherits(res$reml, "app_error") || inherits(res$mm, "app_error")) {
+      return("Automatic summary unavailable because at least one method failed. Please review the warnings and inputs.")
+    }
+    
+    pos_diff <- abs(res$reml$pos - res$mm$pos)
+    material_flag <- pos_diff > input$pos_diff_warning_threshold
+    
+    interpretation_text <- if (material_flag) {
+      paste0(
+        "The absolute PoS difference between REML and method of moments is ",
+        sprintf("%.3f", pos_diff),
+        ", which exceeds the predefined warning threshold of ",
+        sprintf("%.3f", input$pos_diff_warning_threshold),
+        ". This suggests material sensitivity to the heterogeneity estimation method, and the current PoS result should be interpreted with caution."
+      )
+    } else {
+      paste0(
+        "The absolute PoS difference between REML and method of moments is ",
+        sprintf("%.3f", pos_diff),
+        ", which does not exceed the predefined warning threshold of ",
+        sprintf("%.3f", input$pos_diff_warning_threshold),
+        ". This suggests no material sensitivity to the heterogeneity estimation method under the current input scenario."
+      )
+    }
+    
+    paste0(
+      "Using REML as the primary analysis, the predictive probability of success (PoS) for OS is ",
+      sprintf("%.3f", res$reml$pos),
+      ", with a predicted current-study OS log(HR) of ",
+      sprintf("%.3f", res$reml$mean_pred),
+      " and predictive SD of ",
+      sprintf("%.3f", res$reml$sd_pred),
+      ". ",
+      "Using method of moments as a sensitivity analysis, the PoS is ",
+      sprintf("%.3f", res$mm$pos),
+      ". ",
+      interpretation_text
+    )
   })
   
   output$summary_table <- renderTable({
