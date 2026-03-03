@@ -4,6 +4,7 @@
 .Rproj.user/
 .Ruserdata
 *.Rproj
+
 outputs/*.csv
 outputs/*.txt
 outputs/*.png
