@@ -119,7 +119,10 @@ ui <- fluidPage(
         column(6, h4("REML"), tableOutput("psi_table_reml")),
         column(6, h4("Method of Moments"), tableOutput("psi_table_mm"))
       ),
-      
+##############################newly added on Mar 5, 2026, add scatter plot
+      h3("Historical OS vs PFS (Scatter)"),
+      plotOutput("scatter_plot", height = "420px"),
+############################################      
       h3("Historical Data Used"),
       tableOutput("hist_table")
     )
@@ -468,7 +471,50 @@ server <- function(input, output, session) {
   output$hist_table <- renderTable({
     hist_data()
   })
+
+###############newly added, scatter plot for input data/simulated data: March 5th 2026 by Jinjie
+  output$scatter_plot <- renderPlot({
+  # Pull historical dataset from the reactive source
+  df <- hist_data()
+  # Defensive checks: ensure data exists and required columns are present
+  req(df)
+  req(all(c("logHR_OS", "logHR_PFS") %in% names(df)))
+  # Current-study PFS input (vertical reference line)
+  cur_pfs <- suppressWarnings(as.numeric(input$current_pfs_loghr))
+  if (!is.finite(cur_pfs)) cur_pfs <- NA_real_
+  # Build the scatter plot: historical OS vs PFS relationship
+  gg <- ggplot(df, aes(x = logHR_PFS, y = logHR_OS)) +
+    geom_point(size = 2, alpha = 0.80) +
+    # Add a simple linear trend line for visualization (not the meta-analytic model)
+    geom_smooth(method = "lm", se = TRUE, formula = y ~ x) +
+    labs(
+      x = "Historical logHR_PFS",
+      y = "Historical logHR_OS",
+      title = "Historical association between PFS and OS",
+      subtitle = "Dashed line indicates current-study PFS input"
+    )
+  # Add the current-study PFS reference line if available
+  if (is.finite(cur_pfs)) {
+    gg <- gg + geom_vline(xintercept = cur_pfs, linetype = "dashed")
+  }
+  # Optional: if a Study identifier exists, label a few extreme points to avoid clutter
+  if ("Study" %in% names(df)) {
+    idx <- unique(c(
+      which.min(df$logHR_PFS), which.max(df$logHR_PFS),
+      which.min(df$logHR_OS),  which.max(df$logHR_OS)
+    ))
+    gg <- gg + geom_text(
+      data = df[idx, , drop = FALSE],
+      aes(label = Study),
+      vjust = -0.6,
+      size = 3,
+      check_overlap = TRUE
+    )
+  }
+  gg
+})
   
+  #########################################################################################################
   output$pred_plot <- renderPlot({
     res <- result()
     if (is.null(res)) return(NULL)
