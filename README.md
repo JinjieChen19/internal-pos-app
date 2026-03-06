@@ -1,306 +1,168 @@
-# Internal PoS App
 
-A lightweight internal R Shiny app for estimating the **predictive probability of success (PoS)** for OS using:
+# Internal Probability of Success (PoS) Tool
 
-* historical studies with OS/PFS treatment effect estimates
-* current-study PFS information
-* bivariate meta-analysis with **REML** as the primary method
-* **method of moments (MM)** as a sensitivity analysis
+A statistical framework and interactive **R Shiny application** for predicting **overall survival (OS) outcomes** using **progression-free survival (PFS) evidence** and historical clinical trial data.
 
----
-
-## What this app does
-
-This app estimates the probability that the current study will meet a predefined **OS success threshold**.
-
-The workflow is:
-
-1. Use historical studies with OS and PFS treatment effect estimates.
-2. Estimate the between-study covariance structure using bivariate meta-analysis.
-3. Use the current-study PFS result to derive the predictive distribution of the current-study OS effect.
-4. Compute PoS under:
-
-   * **REML** (primary analysis)
-   * **Method of Moments** (sensitivity analysis)
-5. Compare the two methods and quantify potential method sensitivity.
-
-The app also provides:
-
-* automatic text summary
-* warning messages
-* PFS scenario analysis
-* downloadable summary and scenario outputs
+Author: Jinjie Chen  
+Methodology: Multivariate Meta-analysis  
+Language: R / Shiny
 
 ---
 
-## Main statistical interpretation
+# Background
 
-### Primary analysis
+In oncology drug development, **overall survival (OS)** is widely considered the gold-standard endpoint. However, OS typically requires substantially longer follow-up compared with **progression-free survival (PFS)**.
 
-**REML** is treated as the primary analysis for between-study covariance estimation.
+In many clinical trials:
 
-### Sensitivity analysis
+- PFS results become available earlier
+- OS data remain immature
+- development decisions must be made before OS maturity
 
-**Method of Moments (MM)** is shown as a sensitivity analysis.
+Typical scenarios include:
 
-### PoS interpretation
+- interim PFS analysis
+- final PFS readout with immature OS
+- statistically significant PFS results while OS follow-up is ongoing
 
-PoS is the predictive probability that the current-study OS effect will be more favorable than the predefined success threshold.
-
-In general:
-
-* **more negative log(HR)** indicates a more favorable treatment effect
-* a **higher PoS** indicates a higher predicted probability of success
-
-### Method sensitivity
-
-The app reports:
-
-[
-|PoS(REML) - PoS(MM)|
-]
-
-If this absolute difference exceeds the user-defined warning threshold, the result should be interpreted with caution because it may be sensitive to the heterogeneity estimation method.
+This project aims to provide a **quantitative framework to translate PFS evidence into a probabilistic prediction of OS outcomes.**
 
 ---
 
-## Required historical CSV format
+# Methodology Overview
 
-The uploaded historical CSV must contain the following columns:
+The statistical approach integrates:
 
-* `Study`
-* `logHR_OS`
-* `logHR_PFS`
-* `SE_OS`
-* `SE_PFS`
-* `R_WITHIN`
+1. **Historical trials**
+2. **Current study evidence**
 
-### Column definitions
+using a **bivariate random-effects meta-analysis model**.
 
-* **Study**: study identifier
-* **logHR_OS**: study-level OS treatment effect estimate on the log(HR) scale
-* **logHR_PFS**: study-level PFS treatment effect estimate on the log(HR) scale
-* **SE_OS**: standard error of the OS effect estimate
-* **SE_PFS**: standard error of the PFS effect estimate
-* **R_WITHIN**: within-study correlation between the OS and PFS effect estimates
+Historical studies with paired OS and PFS treatment effects are used to estimate the joint distribution of the two endpoints.
 
-### Basic input rules
+From this model we derive the **predictive distribution of the OS treatment effect** for the current study conditional on the observed PFS result.
 
-* `SE_OS` and `SE_PFS` must be **greater than 0**
-* `R_WITHIN` must be between **-1 and 1**
-* historical data should contain **at least 3 studies**
-* uploaded files should be in **CSV** format
+The final output is the:
+
+**Probability of Success (PoS)**
+
+defined as the probability that the final OS hazard ratio will meet a predefined success threshold.
 
 ---
 
-## Current-study inputs
+# Mathematical Framework
 
-The app requires the following current-study inputs:
+Let the treatment effects be
 
-* **Current study PFS log(HR)**
-* **Current study OS SE**
-* **Current study PFS SE**
-* **Current study within-study correlation**
+θ = (θ_OS , θ_PFS)
 
-These values are used together with the historical studies to derive the predictive distribution for current-study OS.
+Historical studies follow
 
----
+θ_i ~ N(η , Σ_B)
 
-## Main outputs
+where
 
-### 1. Auto Summary
+η = (η_OS , η_PFS)
 
-A short narrative summary of the main result, including:
+and
 
-* REML PoS
-* predicted current-study OS log(HR)
-* predictive SD
-* MM PoS
-* whether the REML vs MM difference is material
+Σ_B =
+[ τ_OS²   τ_OP
+  τ_OP    τ_PFS² ]
 
-### 2. Main Results
+represents between-study heterogeneity.
 
-Displays, by method:
+Given the observed PFS result from the current study, the predictive distribution of the OS effect can be derived analytically under the multivariate normal framework.
 
-* PoS
-* predicted current-study OS log(HR)
-* predictive SD
-* status
+Probability of success is then computed as
 
-### 3. Method Comparison
-
-Displays:
-
-* absolute PoS difference
-* REML PoS
-* MM PoS
-* interpretation of method sensitivity
-
-### 4. Warnings
-
-Possible warnings include:
-
-* near-boundary or near-zero between-study covariance estimates
-* substantial REML vs MM differences
-* other analysis issues or model-fitting problems
-
-### 5. Predictive Distribution Plot
-
-Shows the predictive distribution for the current-study OS effect.
-
-### 6. PFS Scenario Analysis
-
-Shows how PoS changes as the current-study PFS log(HR) varies while other inputs remain fixed.
-
-### 7. Between-study Covariance Matrices
-
-Displays estimated covariance matrices under:
-
-* REML
-* Method of Moments
+PoS = P( logHR_OS < log(HR_target) )
 
 ---
 
-## Downloadable outputs
+# Shiny Application
 
-The app currently supports downloading:
+The framework is implemented as an **interactive R Shiny application**.
 
-* **Summary Text**
-* **Summary CSV**
-* **Scenario CSV**
-* **Example CSV Template**
+Key features include:
 
-### Summary Text
+### Historical Data Upload
 
-A plain-text narrative summary suitable for:
+Users upload historical datasets containing
 
-* email
-* memo
-* meeting notes
-* slides
+- logHR_OS
+- logHR_PFS
+- SE_OS
+- SE_PFS
+- within-study correlation
 
-### Summary CSV
+### Current Study Inputs
 
-A structured summary of the current run, including:
+Users specify
 
-* data source
-* current-study inputs
-* success threshold
-* REML results
-* MM results
-* absolute PoS difference
-* material sensitivity flag
+- current PFS logHR
+- standard errors
+- correlation
+- OS success threshold
 
-### Scenario CSV
+Optional:
 
-The scenario analysis data used for the PFS scenario plots, including:
+- OS interim estimate
 
-* `current_pfs_loghr`
-* `pos_reml`
-* `pos_mm`
-* `abs_diff`
+### Analysis Options
 
-### Example CSV Template
+Two heterogeneity estimation methods are available
 
-A fake-data template showing the expected historical CSV structure.
+- REML
+- Method of Moments
 
----
+### Visualization
 
-## How to use the app
+The application provides
 
-### Option 1: Use the built-in example data
-
-1. Leave CSV upload empty.
-2. Keep **Use built-in example data** checked.
-3. Enter the current-study inputs.
-4. Click **Run Analysis**.
-
-### Option 2: Upload your own historical CSV
-
-1. Prepare a CSV with the required columns.
-2. Upload the file using **Upload historical studies CSV**.
-3. Enter the current-study inputs.
-4. Click **Run Analysis**.
+- OS–PFS scatter plots
+- PoS scenario curves
+- diagnostic warnings
 
 ---
 
-## Recommended interpretation workflow
+# Repository Structure
 
-For routine internal use, the recommended order is:
-
-1. Review the **Auto Summary**
-2. Review **REML PoS** as the primary result
-3. Check **MM PoS** as a sensitivity analysis
-4. Examine **Absolute PoS Difference**
-5. Review any **warnings**
-6. Inspect the **scenario plots**
-7. Download the summary and scenario outputs if needed
-
----
-
-## Practical interpretation notes
-
-### If REML and MM are close
-
-If the absolute PoS difference is small, the result is less sensitive to the heterogeneity estimation method.
-
-### If REML and MM differ materially
-
-If the absolute PoS difference exceeds the warning threshold, interpret the result more cautiously.
-
-### If between-study covariance is near zero
-
-If the estimated between-study covariance is near zero or on the boundary, predictive uncertainty may be underestimated.
-
-### If current-study PFS is weak or unfavorable
-
-PoS may drop quickly, and sensitivity to model assumptions may become more visible.
+internal-pos-app
+│
+├── app.R
+├── analysis_functions.R
+│
+├── data/
+│
+├── docs/
+│   └── PoS_App_Project_Notes.md
+│
+└── README.md
 
 ---
 
-## Limitations
+# Potential Applications
 
-This app is intended as an **internal decision-support tool** and not as a fully validated production system.
+This framework may support decision making in situations where:
 
-Users should keep in mind:
-
-* results depend on the quality and relevance of the historical studies
-* results depend on the assumed within-study correlations
-* REML and MM may behave differently when heterogeneity is weak or near the boundary
-* scenario analysis is descriptive and should support, not replace, scientific judgment
+- PFS evidence is available but OS data remain immature
+- program continuation decisions must be made
+- uncertainty around OS outcomes needs to be quantified
 
 ---
 
-## Local run instructions
+# Future Development
 
-Install required packages:
+Planned extensions include
 
-```r
-install.packages(c("shiny", "ggplot2", "mvmeta", "MASS"))
-```
-
-Run the app from the project directory:
-
-```r
-shiny::runApp()
-```
+- integration of OS interim evidence
+- additional visualization tools
+- model diagnostics
+- possible full Bayesian implementation
 
 ---
 
-## Suggested future enhancements
+# License
 
-Potential next steps for future versions include:
-
-* downloadable plot files
-* richer error messages
-* additional sensitivity analyses
-* scenario-region highlighting
-* more formal reporting output
-* deployment to an internal shared environment
-
----
-
-## Contact / ownership
-
-This app is currently intended for internal exploratory and planning use.
-Please contact the app owner for questions about inputs, assumptions, or interpretation.
+Internal research project prototype.
