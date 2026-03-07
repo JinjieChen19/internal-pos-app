@@ -45,6 +45,16 @@ ui <- fluidPage(
       
       hr(),
       
+      checkboxInput("use_os_interim", "Use OS interim data (optional)", value = FALSE),
+      
+      conditionalPanel(
+        condition = "input.use_os_interim == true",
+        numericInput("current_os_int_loghr", "Current study OS interim log(HR)", value = -0.05, step = 0.01),
+        numericInput("current_os_int_se", "Current study OS interim SE", value = 0.20, step = 0.01),
+        tags$small("If selected, the model updates the predicted final OS effect using both PFS and interim OS evidence.")
+      ),
+      br(),
+      
       h4("Current Study Inputs"),
       numericInput("current_pfs_loghr", "Current study PFS log(HR)", value = -0.22, step = 0.01),
       numericInput("current_os_se", "Current study OS SE", value = 0.12, min = 0.001, step = 0.01),
@@ -223,7 +233,10 @@ server <- function(input, output, session) {
       current_os_se = input$current_os_se,
       current_pfs_se = input$current_pfs_se,
       current_rho = input$current_rho,
-      success_hr_threshold = input$success_hr_threshold
+      success_hr_threshold = input$success_hr_threshold,
+      use_os_interim = isTRUE(input$use_os_interim),
+      current_os_int_loghr = input$current_os_int_loghr,
+      current_os_int_se = input$current_os_int_se
     )
   }, ignoreInit = TRUE)
   
@@ -247,7 +260,10 @@ server <- function(input, output, session) {
         current_os_se = input$current_os_se,
         current_pfs_se = input$current_pfs_se,
         current_rho = input$current_rho,
-        success_hr_threshold = input$success_hr_threshold
+        success_hr_threshold = input$success_hr_threshold,
+        use_os_interim = isTRUE(input$use_os_interim),
+        current_os_int_loghr = input$current_os_int_loghr,
+        current_os_int_se = input$current_os_int_se
       )
       
       reml_pos <- if (!inherits(res$reml, "app_error")) res$reml$pos else NA_real_
@@ -272,6 +288,12 @@ server <- function(input, output, session) {
       return("Automatic summary unavailable because at least one method failed. Please review the warnings and inputs.")
     }
     
+    inputs_used <- if (isTRUE(input$use_os_interim)) {
+      "PFS + OS interim"
+    } else {
+      "PFS only"
+    }
+    
     pos_diff <- abs(res$reml$pos - res$mm$pos)
     material_flag <- pos_diff > input$pos_diff_warning_threshold
     
@@ -294,6 +316,7 @@ server <- function(input, output, session) {
     }
     
     paste0(
+      "Inputs used: ",inputs_used, ". ",
       "Using REML as the primary analysis, the predictive probability of success (PoS) for OS is ",
       sprintf("%.3f", res$reml$pos),
       ", with a predicted current-study OS log(HR) of ",
@@ -320,6 +343,12 @@ server <- function(input, output, session) {
     res <- result()
     if (is.null(res)) return(NULL)
     
+    inputs_used <- if (isTRUE(input$use_os_interim)) {
+      "PFS + OS interim"
+    } else {
+      "PFS only"
+    }
+    
     get_row <- function(x, label) {
       if (inherits(x, "app_error")) {
         return(data.frame(
@@ -327,6 +356,7 @@ server <- function(input, output, session) {
           PoS = NA,
           Predicted_OS_logHR = NA,
           Predictive_SD = NA,
+          Inputs_Used = inputs_used,
           Status = paste("Error:", x$error_message),
           stringsAsFactors = FALSE
         ))
@@ -337,6 +367,7 @@ server <- function(input, output, session) {
         PoS = round(x$pos, 3),
         Predicted_OS_logHR = round(x$mean_pred, 3),
         Predictive_SD = round(x$sd_pred, 3),
+        Inputs_Used = inputs_used,
         Status = "OK",
         stringsAsFactors = FALSE
       )
@@ -628,10 +659,16 @@ server <- function(input, output, session) {
       } else {
         pos_diff <- abs(res$reml$pos - res$mm$pos)
         material_flag <- ifelse(pos_diff > input$pos_diff_warning_threshold, "Yes", "No")
+        inputs_used <- if (isTRUE(input$use_os_interim)) {
+          "PFS + OS interim"
+        } else {
+          "PFS only"
+        }
         
         out <- data.frame(
           Metric = c(
             "Data source",
+            "Inputs used",
             "Current PFS log(HR)",
             "Current OS SE",
             "Current PFS SE",
@@ -648,6 +685,7 @@ server <- function(input, output, session) {
           ),
           Value = c(
             data_source_label(),
+            inputs_used,
             round(input$current_pfs_loghr, 4),
             round(input$current_os_se, 4),
             round(input$current_pfs_se, 4),

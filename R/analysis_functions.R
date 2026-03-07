@@ -1,13 +1,29 @@
 # R/analysis_functions.R
-
+#
 # Core analysis functions for internal PoS Shiny app
-# Statistical approach:
-# - Historical studies provide OS/PFS treatment effects and within-study covariance
-# - Fit bivariate meta-analysis using mvmeta
-# - Estimate between-study covariance (Psi) using REML or method of moments
-# - Use current-study PFS plus estimated covariance structure to derive
-#   predictive distribution for current-study OS
-# - Compute PoS = P(current OS log(HR) < log(success_hr_threshold))
+#
+# This version follows the Daniels & Hughes (1997) surrogate-endpoint structure
+# more closely than the earlier conditional-update implementation:
+#
+# Historical level
+#   Y_i = (Y_OS,i, Y_PFS,i)' | (T_i, S_i)' ~ N((T_i, S_i)', Sigma_i)
+#   T_i | S_i ~ N(alpha + beta * S_i, tau2)
+#   S_i ~ N(eta, psi2)
+#
+# Current-study prediction target
+#   The target is always the latent final OS effect T_*.
+#   PFS-only and PFS+OS-interim modes therefore predict the same target.
+#
+# Current-study observation model
+#   Y_PFS,* | S_* ~ N(S_*, se_pfs^2)
+#   Y_OS,int,* | T_* ~ N(T_*, se_os_int^2)  [optional extension]
+#
+# REML and method-of-moments are both retained through mvmeta::mvmeta()
+# for the historical bivariate random-effects fit. The fitted Psi is then
+# re-parameterized into the Daniels-Hughes regression form.
+#
+# V_eta is propagated only as an additional variance term in the final
+# predictive variance via a delta-method correction on the posterior mean.
 
 make_cov <- function(sd1, sd2, rho) {
   if (!is.numeric(sd1) || length(sd1) != 1 || is.na(sd1) || sd1 <= 0) {
@@ -78,6 +94,7 @@ validate_hist_data <- function(hist_dat) {
 
 is_near_zero_matrix <- function(mat, abs_tol = 1e-4, fro_tol = 1e-4) {
   if (is.null(mat)) return(TRUE)
+  
   vals <- as.numeric(mat)
   vals <- vals[is.finite(vals)]
   if (length(vals) == 0) return(TRUE)
@@ -88,38 +105,10 @@ is_near_zero_matrix <- function(mat, abs_tol = 1e-4, fro_tol = 1e-4) {
   (max_abs < abs_tol) || (frob < fro_tol)
 }
 
-compute_pos <- function(
-    hist_dat,
-    current_pfs_loghr,
-    current_os_se,
-    current_pfs_se,
-    current_rho,
-    method = c("reml", "mm"),
-    success_hr_threshold = 1.0
-) {
+fit_bivariate_meta <- function(hist_dat, method = c("reml", "mm")) {
   method <- match.arg(method)
   
   validate_hist_data(hist_dat)
-  
-  if (!is.numeric(current_pfs_loghr) || length(current_pfs_loghr) != 1 || is.na(current_pfs_loghr)) {
-    stop("current_pfs_loghr must be a single numeric value.")
-  }
-  if (!is.numeric(current_os_se) || length(current_os_se) != 1 || is.na(current_os_se) || current_os_se <= 0) {
-    stop("current_os_se must be a single positive numeric value.")
-  }
-  if (!is.numeric(current_pfs_se) || length(current_pfs_se) != 1 || is.na(current_pfs_se) || current_pfs_se <= 0) {
-    stop("current_pfs_se must be a single positive numeric value.")
-  }
-  if (!is.numeric(current_rho) || length(current_rho) != 1 || is.na(current_rho) ||
-      current_rho < -1 || current_rho > 1) {
-    stop("current_rho must be a single numeric value between -1 and 1.")
-  }
-  if (!is.numeric(success_hr_threshold) || length(success_hr_threshold) != 1 ||
-      is.na(success_hr_threshold) || success_hr_threshold <= 0) {
-    stop("success_hr_threshold must be a single positive numeric value.")
-  }
-  
-  warning_messages <- character(0)
   
   y_hist <- as.matrix(hist_dat[, c("logHR_OS", "logHR_PFS")])
   colnames(y_hist) <- c("logHR_OS", "logHR_PFS")
@@ -154,7 +143,8 @@ compute_pos <- function(
     stop("Failed to extract estimated between-study covariance matrix (Psi).")
   }
   
-  # More robust warning for near-zero heterogeneity
+  warning_messages <- character(0)
+  
   if (is_near_zero_matrix(Sigma0_hat, abs_tol = 5e-4, fro_tol = 8e-4)) {
     warning_messages <- c(
       warning_messages,
@@ -169,41 +159,250 @@ compute_pos <- function(
     )
   }
   
-  S_current <- make_cov(
-    sd1 = current_os_se,
-    sd2 = current_pfs_se,
-    rho = current_rho
+  list(
+    fit = fit,
+    eta_hat = eta_hat,
+    V_eta = V_eta,
+    Sigma0_hat = Sigma0_hat,
+    warning_messages = unique(warning_messages)
+  )
+}
+
+fit_dh_params <- function(eta_hat, Sigma0_hat, eps = 1e-10) {
+  if (!is.numeric(eta_hat) || length(eta_hat) != 2 || any(!is.finite(eta_hat))) {
+    stop("eta_hat must be a length-2 finite numeric vector.")
+  }
+  if (!is.matrix(Sigma0_hat) || !all(dim(Sigma0_hat) == c(2, 2)) || any(!is.finite(Sigma0_hat))) {
+    stop("Sigma0_hat must be a 2x2 finite numeric matrix.")
+  }
+  
+  # Historical ordering from mvmeta fit: (OS, PFS)
+  mu_t <- as.numeric(eta_hat[1])
+  mu_s <- as.numeric(eta_hat[2])
+  
+  var_t <- as.numeric(Sigma0_hat[1, 1])
+  cov_ts <- as.numeric(Sigma0_hat[1, 2])
+  var_s <- as.numeric(Sigma0_hat[2, 2])
+  
+  if (!is.finite(var_s) || var_s <= eps) {
+    warning("Estimated between-study variance for PFS is near zero; applying numerical lower bound.")
+    var_s <- eps
+  }
+  
+  beta <- cov_ts / var_s
+  alpha <- mu_t - beta * mu_s
+  tau2 <- var_t - (cov_ts^2) / var_s
+  tau2 <- max(tau2, eps)
+  
+  # Prior for current latent (S, T) implied by D&H model.
+  mu_z <- c(mu_s, mu_t)
+  Sigma_z <- matrix(
+    c(
+      var_s, cov_ts,
+      cov_ts, var_t
+    ),
+    nrow = 2,
+    byrow = TRUE
   )
   
-  Sigma_cur <- Sigma0_hat + S_current
-  
-  if (!is.finite(Sigma_cur[2, 2]) || Sigma_cur[2, 2] <= 0) {
-    stop("Computed predictive variance for current-study PFS is non-positive. Please check inputs.")
+  list(
+    alpha = alpha,
+    beta = beta,
+    tau2 = tau2,
+    eta = mu_s,
+    psi2 = var_s,
+    mu_z = mu_z,
+    Sigma_z = Sigma_z
+  )
+}
+
+predict_os_dh <- function(
+    eta_hat,
+    Sigma0_hat,
+    V_eta,
+    pfs_loghr,
+    se_pfs,
+    os_interim_loghr = NA_real_,
+    se_os_interim = NA_real_,
+    rho_pfs_os_interim = 0,
+    huge_var = 1e10
+) {
+  if (!is.numeric(eta_hat) || length(eta_hat) != 2 || any(!is.finite(eta_hat))) {
+    stop("eta_hat must be a length-2 finite numeric vector.")
+  }
+  if (!is.matrix(Sigma0_hat) || !all(dim(Sigma0_hat) == c(2, 2)) || any(!is.finite(Sigma0_hat))) {
+    stop("Sigma0_hat must be a 2x2 finite numeric matrix.")
+  }
+  if (!is.matrix(V_eta) || !all(dim(V_eta) == c(2, 2)) || any(!is.finite(V_eta))) {
+    stop("V_eta must be a 2x2 finite numeric matrix.")
+  }
+  if (!is.numeric(pfs_loghr) || length(pfs_loghr) != 1 || !is.finite(pfs_loghr)) {
+    stop("pfs_loghr must be a single finite numeric value.")
+  }
+  if (!is.numeric(se_pfs) || length(se_pfs) != 1 || !is.finite(se_pfs) || se_pfs <= 0) {
+    stop("se_pfs must be a single positive numeric value.")
+  }
+  if (!is.numeric(rho_pfs_os_interim) || length(rho_pfs_os_interim) != 1 || is.na(rho_pfs_os_interim) ||
+      rho_pfs_os_interim < -1 || rho_pfs_os_interim > 1) {
+    stop("rho_pfs_os_interim must be between -1 and 1.")
   }
   
-  h <- Sigma_cur[1, 2] / Sigma_cur[2, 2]
-  v_cond <- Sigma_cur[1, 1] - (Sigma_cur[1, 2]^2 / Sigma_cur[2, 2])
+  has_os_int <- is.finite(os_interim_loghr) && is.finite(se_os_interim) && se_os_interim > 0
   
-  if (!is.finite(v_cond) || v_cond <= 0) {
-    stop("Computed conditional predictive variance for current-study OS is non-positive or invalid.")
+  dh <- fit_dh_params(eta_hat = eta_hat, Sigma0_hat = Sigma0_hat)
+  mu_z <- dh$mu_z             # order: (S, T)
+  Sigma_z <- dh$Sigma_z       # order: (S, T)
+  
+  if (!has_os_int) {
+    y <- matrix(pfs_loghr, nrow = 1)
+    H <- matrix(c(1, 0), nrow = 1)
+    R <- matrix(se_pfs^2, nrow = 1)
+    mode_label <- "PFS-only mode"
+  } else {
+    y <- matrix(c(pfs_loghr, os_interim_loghr), nrow = 2)
+    H <- diag(2)
+    R <- matrix(
+      c(
+        se_pfs^2, rho_pfs_os_interim * se_pfs * se_os_interim,
+        rho_pfs_os_interim * se_pfs * se_os_interim, se_os_interim^2
+      ),
+      nrow = 2,
+      byrow = TRUE
+    )
+    mode_label <- "Joint mode: D&H latent-final-OS prediction updated by current PFS and OS interim"
   }
   
-  a <- c(1, -h)
-  mean_pred <- eta_hat[1] + h * (current_pfs_loghr - eta_hat[2])
-  var_pred <- as.numeric(t(a) %*% V_eta %*% a + v_cond)
+  HSHT <- H %*% Sigma_z %*% t(H) + R
+  inv_HSHT <- tryCatch(solve(HSHT), error = function(e) NULL)
+  if (is.null(inv_HSHT)) {
+    stop("Failed to invert the current-study observation covariance. Check SE inputs and rho_pfs_os_interim.")
+  }
+  
+  K <- Sigma_z %*% t(H) %*% inv_HSHT  # 2 x k
+  mu_obs <- H %*% mu_z
+  post_mean_z <- mu_z + K %*% (y - mu_obs)
+  post_cov_z <- Sigma_z - K %*% H %*% Sigma_z
+  
+  # Target is latent final OS effect T_* (second component under z=(S,T)).
+  mean_pred <- as.numeric(post_mean_z[2])
+  var_pred <- as.numeric(post_cov_z[2, 2])
+  
+  # Delta-method propagation of uncertainty in eta_hat only.
+  # mu_z = P %*% eta_hat where eta_hat is ordered (OS, PFS).
+  P_swap <- matrix(c(0, 1, 1, 0), nrow = 2, byrow = TRUE)
+  grad_mu_z <- matrix(c(0, 1), nrow = 1) %*% (diag(2) - K %*% H)
+  grad_eta_hat <- grad_mu_z %*% P_swap
+  var_pred <- var_pred + as.numeric(grad_eta_hat %*% V_eta %*% t(grad_eta_hat))
   
   if (!is.finite(var_pred) || var_pred <= 0) {
     stop("Final predictive variance is non-positive or invalid.")
   }
   
-  sd_pred <- sqrt(var_pred)
-  threshold_loghr <- log(success_hr_threshold)
+  if (!has_os_int) {
+    pfs_weight <- as.numeric(K[2, 1])
+    os_weight <- 0
+  } else {
+    pfs_weight <- as.numeric(K[2, 1])
+    os_weight <- as.numeric(K[2, 2])
+  }
   
-  pos <- stats::pnorm(threshold_loghr, mean = mean_pred, sd = sd_pred)
+  list(
+    mean = mean_pred,
+    se = sqrt(var_pred),
+    y = y,
+    H = H,
+    R = R,
+    K = K,
+    mu_prior = mu_z,
+    Sigma_prior = Sigma_z,
+    post_mean_z = post_mean_z,
+    post_cov_z = post_cov_z,
+    dh_params = dh,
+    has_os_interim = has_os_int,
+    os_interim_weight = os_weight,
+    pfs_weight = pfs_weight,
+    weight_note = "Weights are coefficients on observed current-study endpoints in posterior mean of latent final OS.",
+    mode_label = mode_label
+  )
+}
+
+compute_pos <- function(
+    hist_dat,
+    current_pfs_loghr,
+    current_os_se,
+    current_pfs_se,
+    current_rho,
+    method = c("reml", "mm"),
+    success_hr_threshold = 1.0,
+    use_os_interim = FALSE,
+    current_os_int_loghr = NA_real_,
+    current_os_int_se = NA_real_,
+    rho_pfs_osint = 0
+) {
+  method <- match.arg(method)
+  
+  if (!is.numeric(current_pfs_loghr) || length(current_pfs_loghr) != 1 || is.na(current_pfs_loghr)) {
+    stop("current_pfs_loghr must be a single numeric value.")
+  }
+  if (!is.numeric(current_os_se) || length(current_os_se) != 1 || is.na(current_os_se) || current_os_se <= 0) {
+    stop("current_os_se must be a single positive numeric value.")
+  }
+  if (!is.numeric(current_pfs_se) || length(current_pfs_se) != 1 || is.na(current_pfs_se) || current_pfs_se <= 0) {
+    stop("current_pfs_se must be a single positive numeric value.")
+  }
+  if (!is.numeric(current_rho) || length(current_rho) != 1 || is.na(current_rho) ||
+      current_rho < -1 || current_rho > 1) {
+    stop("current_rho must be a single numeric value between -1 and 1.")
+  }
+  if (!is.numeric(success_hr_threshold) || length(success_hr_threshold) != 1 ||
+      is.na(success_hr_threshold) || success_hr_threshold <= 0) {
+    stop("success_hr_threshold must be a single positive numeric value.")
+  }
+  if (!is.numeric(rho_pfs_osint) || length(rho_pfs_osint) != 1 || is.na(rho_pfs_osint) ||
+      rho_pfs_osint < -1 || rho_pfs_osint > 1) {
+    stop("rho_pfs_osint must be a single numeric value between -1 and 1.")
+  }
+  
+  if (isTRUE(use_os_interim)) {
+    if (!is.numeric(current_os_int_loghr) || length(current_os_int_loghr) != 1 || is.na(current_os_int_loghr)) {
+      stop("current_os_int_loghr must be a single numeric value when use_os_interim = TRUE.")
+    }
+    if (!is.numeric(current_os_int_se) || length(current_os_int_se) != 1 || is.na(current_os_int_se) ||
+        current_os_int_se <= 0) {
+      stop("current_os_int_se must be a single positive numeric value when use_os_interim = TRUE.")
+    }
+  }
+  
+  meta_res <- fit_bivariate_meta(hist_dat = hist_dat, method = method)
+  
+  pred_res <- predict_os_dh(
+    eta_hat = meta_res$eta_hat,
+    Sigma0_hat = meta_res$Sigma0_hat,
+    V_eta = meta_res$V_eta,
+    pfs_loghr = current_pfs_loghr,
+    se_pfs = current_pfs_se,
+    os_interim_loghr = if (isTRUE(use_os_interim)) current_os_int_loghr else NA_real_,
+    se_os_interim = if (isTRUE(use_os_interim)) current_os_int_se else NA_real_,
+    rho_pfs_os_interim = if (isTRUE(use_os_interim)) rho_pfs_osint else 0
+  )
+  
+  pos <- stats::pnorm(
+    log(success_hr_threshold),
+    mean = pred_res$mean,
+    sd = pred_res$se
+  )
   
   if (!is.finite(pos)) {
     stop("Computed PoS is invalid.")
   }
+  
+  warning_messages <- meta_res$warning_messages
+  
+  warning_messages <- c(
+    warning_messages,
+    "Prediction target is the latent final OS treatment effect, consistent across PFS-only and PFS+OS-interim modes.",
+    "Under the Daniels-Hughes formulation, current_os_se is not used in the current-study prediction step because the target is latent final OS, not a future noisy final-OS estimate."
+  )
   
   if (pos < 0.05 || pos > 0.95) {
     warning_messages <- c(
@@ -212,16 +411,52 @@ compute_pos <- function(
     )
   }
   
+  if (isTRUE(use_os_interim)) {
+    warning_messages <- c(
+      warning_messages,
+      "OS interim mode is ON: current PFS and current OS interim update the same latent final OS target.",
+      sprintf(
+        "Current-study observation weights for latent final OS: PFS = %.3f, OS interim = %.3f.",
+        pred_res$pfs_weight, pred_res$os_interim_weight
+      )
+    )
+    if (abs(rho_pfs_osint) < 1e-12) {
+      warning_messages <- c(
+        warning_messages,
+        "rho_pfs_osint is set to 0. This is a sensitivity-analysis default, not a scientifically established true value."
+      )
+    }
+  } else {
+    warning_messages <- c(
+      warning_messages,
+      sprintf(
+        "Current-study observation weight for latent final OS from PFS = %.3f.",
+        pred_res$pfs_weight
+      )
+    )
+  }
+  
   list(
     method = method,
     pos = pos,
-    mean_pred = mean_pred,
-    sd_pred = sd_pred,
-    threshold_loghr = threshold_loghr,
-    eta_hat = eta_hat,
-    Sigma0_hat = Sigma0_hat,
+    mean_pred = pred_res$mean,
+    sd_pred = pred_res$se,
+    threshold_loghr = log(success_hr_threshold),
+    eta_hat = meta_res$eta_hat,
+    Sigma0_hat = meta_res$Sigma0_hat,
     warning_messages = unique(warning_messages),
-    fit = fit
+    fit = meta_res$fit,
+    V_eta = meta_res$V_eta,
+    predictor_details = pred_res,
+    post_mean_vec = c(NA_real_, pred_res$mean),
+    post_cov = matrix(c(NA_real_, NA_real_, NA_real_, pred_res$se^2), nrow = 2),
+    os_interim_weight = pred_res$os_interim_weight,
+    pfs_weight = pred_res$pfs_weight,
+    dh_alpha = pred_res$dh_params$alpha,
+    dh_beta = pred_res$dh_params$beta,
+    dh_tau2 = pred_res$dh_params$tau2,
+    dh_eta = pred_res$dh_params$eta,
+    dh_psi2 = pred_res$dh_params$psi2
   )
 }
 
@@ -231,7 +466,11 @@ compute_pos_both_methods <- function(
     current_os_se,
     current_pfs_se,
     current_rho,
-    success_hr_threshold = 1.0
+    success_hr_threshold = 0.80,
+    use_os_interim = FALSE,
+    current_os_int_loghr = NA_real_,
+    current_os_int_se = NA_real_,
+    rho_pfs_osint = 0
 ) {
   res_reml <- tryCatch(
     compute_pos(
@@ -241,7 +480,11 @@ compute_pos_both_methods <- function(
       current_pfs_se = current_pfs_se,
       current_rho = current_rho,
       method = "reml",
-      success_hr_threshold = success_hr_threshold
+      success_hr_threshold = success_hr_threshold,
+      use_os_interim = use_os_interim,
+      current_os_int_loghr = current_os_int_loghr,
+      current_os_int_se = current_os_int_se,
+      rho_pfs_osint = rho_pfs_osint
     ),
     error = function(e) structure(list(error_message = e$message), class = "app_error")
   )
@@ -254,10 +497,17 @@ compute_pos_both_methods <- function(
       current_pfs_se = current_pfs_se,
       current_rho = current_rho,
       method = "mm",
-      success_hr_threshold = success_hr_threshold
+      success_hr_threshold = success_hr_threshold,
+      use_os_interim = use_os_interim,
+      current_os_int_loghr = current_os_int_loghr,
+      current_os_int_se = current_os_int_se,
+      rho_pfs_osint = rho_pfs_osint
     ),
     error = function(e) structure(list(error_message = e$message), class = "app_error")
   )
   
-  list(reml = res_reml, mm = res_mm)
+  list(
+    reml = res_reml,
+    mm = res_mm
+  )
 }
