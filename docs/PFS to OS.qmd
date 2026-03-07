@@ -1,0 +1,364 @@
+
+---
+title: "PoS App Model Notes"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+execute:
+  echo: false
+---
+
+# Overview
+
+This document records the statistical model currently implemented in the PoS Shiny app, how the implementation maps to the model, and what directions remain for future improvement.
+
+The app predicts the probability of success (PoS) for the **current trial final OS effect** using:
+
+1. historical trials with paired OS and PFS treatment effects, and
+2. current-trial evidence, either
+   - current PFS only, or
+   - current PFS plus current OS interim.
+
+The current implementation follows the **Daniels and Hughes (1997)** surrogate-endpoint framework at the level of the latent current-trial target.
+
+# Statistical target
+
+Let:
+
+- $T_i$ denote the latent true treatment effect on the final endpoint for study $i$; here this is the final OS log(HR).
+- $S_i$ denote the latent true treatment effect on the surrogate endpoint for study $i$; here this is the PFS log(HR).
+
+The prediction target is always the same quantity:
+
+$$
+T_*
+$$
+
+where $*$ denotes the current trial.
+
+This is important because it makes the two operating modes directly comparable:
+
+- **PFS-only mode** predicts $T_*$ from current PFS.
+- **PFS + OS interim mode** updates that same $T_*$ using both current PFS and current OS interim.
+
+# Daniels-Hughes model
+
+## Observation model for historical studies
+
+For each historical study $i$, let $Y_{Ti}$ and $Y_{Si}$ be the observed treatment-effect estimates for OS and PFS. The within-study model is:
+
+$$
+\begin{pmatrix}
+Y_{Ti} \\
+Y_{Si}
+\end{pmatrix}
+\mid
+\begin{pmatrix}
+T_i \\
+S_i
+\end{pmatrix}
+\sim
+N\left(
+\begin{pmatrix}
+T_i \\
+S_i
+\end{pmatrix},
+\Sigma_i
+\right)
+$$
+
+where $\Sigma_i$ is the within-study covariance matrix constructed from:
+
+- `SE_OS`
+- `SE_PFS`
+- `R_WITHIN`
+
+for each historical study.
+
+## Between-study surrogate relationship
+
+Daniels and Hughes parameterize the relationship between the latent true effects as:
+
+$$
+T_i \mid S_i \sim N(\alpha + \beta S_i, \tau^2)
+$$
+
+and
+
+$$
+S_i \sim N(\eta, \psi^2)
+$$
+
+This implies:
+
+- $\alpha$: intercept of the trial-level surrogate relationship
+- $\beta$: slope linking true PFS effect to true OS effect
+- $\tau^2$: residual between-study heterogeneity in OS after conditioning on PFS
+- $\eta$: mean latent PFS effect across historical studies
+- $\psi^2$: between-study variance of latent PFS effects
+
+# How the app estimates the model
+
+## Step 1: fit historical bivariate meta-analysis
+
+The app first fits a bivariate random-effects meta-analysis to the historical study-level OS/PFS estimates using `mvmeta`.
+
+The output of that fit is:
+
+- `eta_hat`: estimated mean vector for `(OS, PFS)`
+- `Psi`: estimated between-study covariance matrix
+- `V_eta`: covariance matrix of the estimated mean vector
+
+Two estimation methods are preserved in the app:
+
+- REML
+- Method of Moments (MM)
+
+REML is treated as the primary analysis and MM is reported as a sensitivity analysis.
+
+## Step 2: re-express `Psi` in Daniels-Hughes form
+
+Let:
+
+$$
+\eta_{hat} =
+\begin{pmatrix}
+\mu_T \\
+\mu_S
+\end{pmatrix},
+\quad
+\Psi =
+\begin{pmatrix}
+\sigma_T^2 & \sigma_{TS} \\
+\sigma_{TS} & \sigma_S^2
+\end{pmatrix}
+$$
+
+Then the app derives:
+
+$$
+\beta = \frac{\sigma_{TS}}{\sigma_S^2}
+$$
+
+$$
+\alpha = \mu_T - \beta \mu_S
+$$
+
+$$
+\tau^2 = \sigma_T^2 - \frac{\sigma_{TS}^2}{\sigma_S^2}
+$$
+
+$$
+\eta = \mu_S
+$$
+
+$$
+\psi^2 = \sigma_S^2
+$$
+
+These parameters are displayed in the app for both REML and MM.
+
+# Current-trial prediction
+
+## PFS-only mode
+
+The current-trial observation model is:
+
+$$
+Y_{S*} \mid S_* \sim N(S_*, \sigma_{S*}^2)
+$$
+
+The prior for the latent current-trial vector $(T_*, S_*)$ is given by the historical mean and historical between-study covariance.
+
+The posterior distribution of the latent current-trial vector is obtained by Gaussian updating, where only PFS is observed and OS interim is treated as missing.
+
+The app then extracts the posterior for $T_*$ and computes:
+
+$$
+PoS = P\left(T_* < \log(\text{success threshold}) \mid Y_{S*}\right)
+$$
+
+## PFS + OS interim mode
+
+In joint mode, the current-trial observations are:
+
+$$
+Y_{OS,int,*} \mid T_* \sim N(T_*, \sigma_{OS,int,*}^2)
+$$
+
+$$
+Y_{S*} \mid S_* \sim N(S_*, \sigma_{S*}^2)
+$$
+
+and optionally a sampling-error correlation is allowed between the two observed estimates:
+
+$$
+\text{Corr}(Y_{OS,int,*}, Y_{S*}) = \rho_{pfs,osint}
+$$
+
+The app performs a joint Gaussian update for the latent vector $(T_*, S_*)$. The posterior mean of $T_*$ is then used to compute PoS against the same success threshold as in PFS-only mode.
+
+This means joint mode is a true update of the same target, not a different prediction problem.
+
+# Predictive variance and the role of `V_eta`
+
+A key implementation decision is that:
+
+- `Psi` is used for **mean updating** and for the latent posterior covariance.
+- `V_eta` is **not** merged into the prior covariance matrix.
+
+Instead, `V_eta` is added only as an extra uncertainty term in the final predictive variance using a gradient-based correction.
+
+This was done to avoid two problems seen in earlier versions:
+
+1. current OS interim had too little impact because the prior was inflated by adding `V_eta` too early, and
+2. REML and MM differences became exaggerated in the joint mode.
+
+# Weights shown in the app
+
+The app reports two weights in joint mode:
+
+- `os_interim_weight`
+- `pfs_weight`
+
+These are the coefficients from the posterior mean of the latent final OS effect:
+
+$$
+E(T_* \mid \text{data}) = \mu_T + w_1 (Y_{OS,int,*} - \mu_T) + w_2 (Y_{S*} - \mu_S)
+$$
+
+where:
+
+- $w_1$ is reported as `os_interim_weight`
+- $w_2$ is reported as `pfs_weight`
+
+These weights help diagnose whether OS interim is materially influencing the current-trial prediction.
+
+# Current app implementation details
+
+## Inputs used by the app
+
+Historical input requires the following columns:
+
+- `Study`
+- `logHR_OS`
+- `logHR_PFS`
+- `SE_OS`
+- `SE_PFS`
+- `R_WITHIN`
+
+Current-trial inputs include:
+
+- current PFS log(HR)
+- current PFS SE
+- optional current OS interim log(HR)
+- optional current OS interim SE
+- optional `rho_pfs_osint`
+- OS success threshold on the HR scale
+
+The app still keeps `current_os_se` and `current_rho` for backward compatibility with earlier versions, but in the current Daniels-Hughes latent-final-OS implementation they are not used in the prediction update.
+
+## Outputs shown by the app
+
+The app currently displays:
+
+- auto summary text
+- main results for REML and MM
+- method comparison
+- warnings
+- predictive distribution plot
+- PFS scenario analysis
+- estimated `Psi`
+- derived Daniels-Hughes parameters
+- historical OS vs PFS scatter plot
+- historical dataset used
+
+# Why this implementation is preferable to the earlier version
+
+This version is preferred because:
+
+1. both operating modes target the same latent final OS quantity,
+2. OS interim now updates that same target rather than switching to a different target definition,
+3. the model is closer to Daniels and Hughes conceptually,
+4. REML and MM differences are less likely to be exaggerated by extra inflation of the prior covariance, and
+5. the displayed weights make the influence of OS interim and PFS more transparent.
+
+# Remaining limitations
+
+Even with the current improvements, several limitations remain.
+
+## 1. `rho_pfs_osint` is rarely known
+
+In practice, the correlation between current-trial PFS and current OS interim estimates is usually not known exactly. The app currently allows the user to input it, and 0 is a reasonable conservative default, but this remains an assumption.
+
+## 2. OS interim is treated as a noisy measurement of final OS effect
+
+This is a practical approximation. A more realistic model could explicitly link interim OS and final OS through information fraction, maturity, or event accumulation.
+
+## 3. Uncertainty in `Psi` is not fully propagated
+
+The app propagates uncertainty in the historical mean vector through `V_eta`, but it does not fully propagate uncertainty in the estimated between-study covariance matrix `Psi`.
+
+## 4. Small numbers of historical studies can make results unstable
+
+When the historical evidence base is small, both REML and MM may be unstable and their difference may become large.
+
+# Future improvement directions
+
+The following are the most natural next steps.
+
+## A. Make `rho_pfs_osint` a formal sensitivity-analysis feature
+
+Instead of a single point input, allow a user-defined grid such as:
+
+- 0.0
+- 0.2
+- 0.4
+- 0.6
+
+and show how PoS changes across these assumptions.
+
+## B. Add an explicit interim-to-final OS bridge
+
+Replace the simple noisy-measurement assumption
+
+$$
+Y_{OS,int,*} \mid T_* \sim N(T_*, \sigma^2)
+$$
+
+with a model that accounts for maturity or information fraction.
+
+## C. Propagate uncertainty in `Psi`
+
+A Bayesian implementation or a bootstrap-based approach could better reflect parameter uncertainty in the historical surrogate relationship.
+
+## D. Add leave-one-out or external validation diagnostics
+
+Historical predictive performance diagnostics would help assess whether the surrogate relationship is stable enough for decision-making.
+
+## E. Support more flexible surrogate relationships
+
+The current implementation assumes linear trial-level association in the Daniels-Hughes sense. Future work could consider nonlinearity, robust regression, or shrinkage approaches when the historical dataset is small.
+
+# Practical guidance for use
+
+The current app is most appropriate when:
+
+- historical trials are reasonably comparable,
+- PFS is a plausible surrogate for OS,
+- the user wants a transparent trial-level prediction framework,
+- REML is used as the primary analysis and MM as a sensitivity analysis, and
+- PoS is interpreted together with the displayed warnings and weights.
+
+# Summary
+
+The current PoS app now implements a cleaner Daniels-Hughes style framework in which:
+
+- historical OS/PFS data define the surrogate relationship,
+- current PFS predicts the current latent final OS effect,
+- optional OS interim updates that same latent final OS effect,
+- `V_eta` contributes only to final predictive uncertainty, and
+- REML and MM remain available as parallel estimation methods.
+
+This provides a more coherent and more explainable basis for internal PoS decision support than the earlier mixed-target implementation.

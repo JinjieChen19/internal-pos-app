@@ -1,3 +1,8 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
 # Predicting Final OS from PFS and Interim OS Using Historical Trial Data
 
 ## 1. Objective
@@ -11,14 +16,14 @@ Two scenarios are considered:
 
 The PoS is defined as:
 
-[
+$$
 PoS = P(\theta_{OS}^{final} < \theta_{success})
-]
+$$
 
 where
 
-* (\theta_{OS}^{final}) = final OS log(HR)
-* (\theta_{success}) = predefined success threshold.
+* $(\theta_{OS}^{final})$ = final OS log(HR)
+* $(\theta_{success})$ = predefined success threshold.
 
 ---
 
@@ -36,23 +41,23 @@ We assume we have **K historical trials** with:
 
 For each study:
 
-[
+$$
 y_i =
 \begin{pmatrix}
 y_{OS,i} \
 y_{PFS,i}
 \end{pmatrix}
-]
+$$
 
 Within-study covariance:
 
-[
+$$
 S_i =
 \begin{pmatrix}
 se_{OS,i}^2 & r_i se_{OS,i} se_{PFS,i} \
 r_i se_{OS,i} se_{PFS,i} & se_{PFS,i}^2
 \end{pmatrix}
-]
+$$
 
 ---
 
@@ -60,13 +65,13 @@ r_i se_{OS,i} se_{PFS,i} & se_{PFS,i}^2
 
 We assume the following **bivariate hierarchical model**:
 
-[
+$$
 y_i \sim N(\theta_i, S_i)
-]
+$$
 
-[
+$$
 \theta_i \sim N(\eta, \Sigma)
-]
+$$
 
 where:
 
@@ -81,9 +86,9 @@ where:
 
 We estimate:
 
-[
+$$
 \hat{\eta}, \hat{\Sigma}
-]
+$$
 
 using **bivariate random-effects meta-analysis**.
 
@@ -116,24 +121,24 @@ We derive the **conditional distribution of OS given PFS**.
 
 Let
 
-[
+$$
 h = \frac{\Sigma_{12}}{\Sigma_{22}}
-]
+$$
 
 Conditional expectation:
 
-[
+$$
 E(OS | PFS) =
 \eta_{OS} + h(PFS - \eta_{PFS})
-]
+$$
 
 Conditional variance:
 
-[
+$$
 v_{cond} =
 \Sigma_{11} -
 \frac{\Sigma_{12}^2}{\Sigma_{22}}
-]
+$$
 
 ---
 
@@ -141,27 +146,27 @@ v_{cond} =
 
 Observed:
 
-* (y_{PFS})
-* (se_{PFS})
+* ($y_{PFS}$)
+* ($se_{PFS}$)
 
 Predictive mean:
 
-[
+$$
 \mu =
 \eta_{OS} +
 h(y_{PFS}-\eta_{PFS})
-]
+$$
 
 Predictive variance:
 
-[
+$$
 Var =
 h^2 se_{PFS}^2 + v_{cond}
-]
+$$
 
-Additionally, we propagate uncertainty of (\hat{\eta}):
+Additionally, we propagate uncertainty of ($\hat{\eta}$):
 
-[
+$$
 Var_{total}
 ===========
 
@@ -170,13 +175,13 @@ h^2 se_{PFS}^2
 v_{cond}
 +
 a^T V_{\eta} a
-]
+$$
 
 where
 
-[
+$$
 a = (1, -h)
-]
+$$
 
 ---
 
@@ -184,49 +189,49 @@ a = (1, -h)
 
 Observed vector:
 
-[
+$$
 y =
 \begin{pmatrix}
 y_{OS}^{interim} \
 y_{PFS}
 \end{pmatrix}
-]
+$$
 
 Within-study covariance:
 
-[
+$$
 S =
 \begin{pmatrix}
 se_{OS,int}^2 & r_{int} se_{OS,int} se_{PFS} \
 r_{int} se_{OS,int} se_{PFS} & se_{PFS}^2
 \end{pmatrix}
-]
+$$
 
 Total covariance:
 
-[
+$$
 V = \Sigma + S
-]
+$$
 
 Prediction of final OS uses **multivariate normal conditioning**:
 
-[
+$$
 E(OS_{final}|y)
 ===============
 
 \eta_{OS} +
 \Sigma_{12}V^{-1}(y-\eta)
-]
+$$
 
 Predictive variance:
 
-[
+$$
 Var =
 \Sigma_{11} -
 \Sigma_{12}V^{-1}\Sigma_{21}
 +
 a^T V_{\eta} a
-]
+$$
 
 ---
 
@@ -234,13 +239,13 @@ a^T V_{\eta} a
 
 Given predictive distribution:
 
-[
+$$
 OS_{final} \sim N(\mu, Var)
-]
+$$
 
 Probability of success:
 
-[
+$$
 PoS =
 P(OS_{final} < \theta_{success})
 ================================
@@ -249,7 +254,7 @@ P(OS_{final} < \theta_{success})
 \left(
 \frac{\theta_{success}-\mu}{\sqrt{Var}}
 \right)
-]
+$$
 
 ---
 
@@ -273,9 +278,9 @@ This suggests the predictive model performs well under simulated settings.
 
 The current implementation **does not propagate uncertainty in the between-trial covariance matrix**:
 
-[
+$$
 \Sigma
-]
+$$
 
 Specifically:
 
@@ -285,7 +290,7 @@ Specifically:
 | uncertainty of η        | ✓        |
 | uncertainty of Σ        | ✗        |
 
-Ignoring uncertainty in (\Sigma) can lead to **overconfident predictions** and **inflated PoS**.
+Ignoring uncertainty in ($\Sigma$) can lead to **overconfident predictions** and **inflated PoS**.
 
 ---
 
@@ -301,7 +306,7 @@ Implement **bootstrap over historical trials**:
 
 1. Resample historical trials
 2. Refit bivariate meta-analysis
-3. Obtain ((\eta^*, \Sigma^*))
+3. Obtain (($\eta^*, \Sigma^*$))
 4. Recompute predictive OS
 5. Average PoS across bootstrap samples
 
@@ -317,15 +322,15 @@ This approach naturally propagates uncertainty in:
 
 Alternative approach:
 
-[
+$$
 (\eta, \Sigma) \sim prior
-]
+$$
 
 Estimate posterior:
 
-[
+$$
 p(OS_{final} | data)
-]
+$$
 
 Advantages:
 
