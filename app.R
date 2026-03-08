@@ -7,29 +7,64 @@ library(MASS)
 
 source("R/analysis_functions.R")
 
-# Built-in example dataset
-default_hist <- data.frame(
-  Study = paste0("Study_", 1:12),
-  logHR_OS  = c(-0.03, -0.22, -0.08, -0.28, -0.11,  0.02, -0.19, -0.13, -0.34, -0.06, -0.17, -0.25),
-  logHR_PFS = c(-0.10, -0.37, -0.18, -0.44, -0.23, -0.02, -0.29, -0.16, -0.49, -0.11, -0.26, -0.35),
-  SE_OS     = c(0.14, 0.11, 0.16, 0.10, 0.15, 0.17, 0.12, 0.14, 0.11, 0.16, 0.13, 0.12),
-  SE_PFS    = c(0.12, 0.09, 0.13, 0.08, 0.11, 0.14, 0.10, 0.12, 0.09, 0.13, 0.10, 0.10),
-  R_WITHIN  = c(0.45, 0.55, 0.40, 0.60, 0.50, 0.35, 0.58, 0.48, 0.62, 0.42, 0.50, 0.57)
-)
+# Built-in example dataset: simulated historical trials with meaningful between-study heterogeneity
+simulate_default_hist <- function(seed = 20260307, n_hist = 27) {
+  set.seed(seed)
+  
+  eta <- c(log(0.75), log(0.70))  # (OS, PFS)
+  
+  sd_os_between  <- 0.09
+  sd_pfs_between <- 0.11
+  rho_between    <- 0.75
+  
+  Sigma0 <- matrix(
+    c(
+      sd_os_between^2,
+      rho_between * sd_os_between * sd_pfs_between,
+      rho_between * sd_os_between * sd_pfs_between,
+      sd_pfs_between^2
+    ),
+    nrow = 2,
+    byrow = TRUE
+  )
+  
+  theta_true <- MASS::mvrnorm(n = n_hist, mu = eta, Sigma = Sigma0)
+  colnames(theta_true) <- c("theta_OS", "theta_PFS")
+  
+  SE_OS  <- runif(n_hist, min = 0.045, max = 0.085)
+  SE_PFS <- runif(n_hist, min = 0.040, max = 0.075)
+  R_WITHIN <- runif(n_hist, min = 0.35, max = 0.65)
+  
+  y_obs <- matrix(NA_real_, nrow = n_hist, ncol = 2)
+  colnames(y_obs) <- c("logHR_OS", "logHR_PFS")
+  
+  for (i in seq_len(n_hist)) {
+    S_i <- matrix(
+      c(
+        SE_OS[i]^2,
+        R_WITHIN[i] * SE_OS[i] * SE_PFS[i],
+        R_WITHIN[i] * SE_OS[i] * SE_PFS[i],
+        SE_PFS[i]^2
+      ),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+    y_obs[i, ] <- MASS::mvrnorm(n = 1, mu = theta_true[i, ], Sigma = S_i)
+  }
+  
+  data.frame(
+    Study = paste0("Study_", seq_len(n_hist)),
+    logHR_OS = y_obs[, "logHR_OS"],
+    logHR_PFS = y_obs[, "logHR_PFS"],
+    SE_OS = SE_OS,
+    SE_PFS = SE_PFS,
+    R_WITHIN = R_WITHIN
+  )
+}
 
-example_template_hist <- data.frame(
-  Study = paste0("Study_", sprintf("%02d", 1:20)),
-  logHR_OS  = c(-0.05, -0.18, -0.09, -0.25, -0.11,  0.01, -0.20, -0.13, -0.31, -0.07,
-                -0.16, -0.23, -0.02, -0.21, -0.10, -0.28, -0.14,  0.03, -0.26, -0.08),
-  logHR_PFS = c(-0.12, -0.30, -0.20, -0.38, -0.24, -0.05, -0.29, -0.16, -0.47, -0.11,
-                -0.25, -0.34, -0.09, -0.33, -0.18, -0.41, -0.22, -0.02, -0.36, -0.15),
-  SE_OS     = c(0.14, 0.11, 0.15, 0.10, 0.14, 0.17, 0.12, 0.14, 0.11, 0.16,
-                0.13, 0.12, 0.15, 0.11, 0.14, 0.10, 0.13, 0.18, 0.11, 0.15),
-  SE_PFS    = c(0.12, 0.09, 0.12, 0.08, 0.10, 0.14, 0.10, 0.12, 0.09, 0.13,
-                0.10, 0.10, 0.13, 0.09, 0.11, 0.08, 0.10, 0.15, 0.09, 0.12),
-  R_WITHIN  = c(0.45, 0.52, 0.40, 0.60, 0.48, 0.35, 0.58, 0.46, 0.63, 0.42,
-                0.50, 0.57, 0.39, 0.55, 0.44, 0.61, 0.49, 0.32, 0.59, 0.43)
-)
+default_hist <- simulate_default_hist()
+example_template_hist <- default_hist
 
 ui <- fluidPage(
   titlePanel("Internal PoS App V1.7"),
@@ -49,14 +84,14 @@ ui <- fluidPage(
       
       conditionalPanel(
         condition = "input.use_os_interim == true",
-        numericInput("current_os_int_loghr", "Current study OS interim log(HR)", value = -0.05, step = 0.01),
+        numericInput("current_os_int_loghr", "Current study OS interim log(HR)", value = log(0.80), step = 0.01),
         numericInput("current_os_int_se", "Current study OS interim SE", value = 0.20, step = 0.01),
         tags$small("If selected, the model updates the predicted final OS effect using both PFS and interim OS evidence.")
       ),
       br(),
       
       h4("Current Study Inputs"),
-      numericInput("current_pfs_loghr", "Current study PFS log(HR)", value = -0.22, step = 0.01),
+      numericInput("current_pfs_loghr", "Current study PFS log(HR)", value = log(0.68), step = 0.01),
       numericInput("current_os_se", "Current study OS SE", value = 0.12, min = 0.001, step = 0.01),
       numericInput("current_pfs_se", "Current study PFS SE", value = 0.10, min = 0.001, step = 0.01),
       numericInput("current_rho", "Current study within-study correlation", value = 0.50, min = -0.99, max = 0.99, step = 0.05),
@@ -129,10 +164,10 @@ ui <- fluidPage(
         column(6, h4("REML"), tableOutput("psi_table_reml")),
         column(6, h4("Method of Moments"), tableOutput("psi_table_mm"))
       ),
-##############################newly added on Mar 5, 2026, add scatter plot
+      ##############################newly added on Mar 5, 2026, add scatter plot
       h3("Historical OS vs PFS (Scatter)"),
       plotOutput("scatter_plot", height = "420px"),
-############################################      
+      ############################################      
       h3("Historical Data Used"),
       tableOutput("hist_table")
     )
@@ -502,48 +537,48 @@ server <- function(input, output, session) {
   output$hist_table <- renderTable({
     hist_data()
   })
-
-###############newly added, scatter plot for input data/simulated data: March 5th 2026 by Jinjie
+  
+  ###############newly added, scatter plot for input data/simulated data: March 5th 2026 by Jinjie
   output$scatter_plot <- renderPlot({
-  # Pull historical dataset from the reactive source
-  df <- hist_data()
-  # Defensive checks: ensure data exists and required columns are present
-  req(df)
-  req(all(c("logHR_OS", "logHR_PFS") %in% names(df)))
-  # Current-study PFS input (vertical reference line)
-  cur_pfs <- suppressWarnings(as.numeric(input$current_pfs_loghr))
-  if (!is.finite(cur_pfs)) cur_pfs <- NA_real_
-  # Build the scatter plot: historical OS vs PFS relationship
-  gg <- ggplot(df, aes(x = logHR_PFS, y = logHR_OS)) +
-    geom_point(size = 2, alpha = 0.80) +
-    # Add a simple linear trend line for visualization (not the meta-analytic model)
-    geom_smooth(method = "lm", se = TRUE, formula = y ~ x) +
-    labs(
-      x = "Historical logHR_PFS",
-      y = "Historical logHR_OS",
-      title = "Historical association between PFS and OS",
-      subtitle = "Dashed line indicates current-study PFS input"
-    )
-  # Add the current-study PFS reference line if available
-  if (is.finite(cur_pfs)) {
-    gg <- gg + geom_vline(xintercept = cur_pfs, linetype = "dashed")
-  }
-  # Optional: if a Study identifier exists, label a few extreme points to avoid clutter
-  if ("Study" %in% names(df)) {
-    idx <- unique(c(
-      which.min(df$logHR_PFS), which.max(df$logHR_PFS),
-      which.min(df$logHR_OS),  which.max(df$logHR_OS)
-    ))
-    gg <- gg + geom_text(
-      data = df[idx, , drop = FALSE],
-      aes(label = Study),
-      vjust = -0.6,
-      size = 3,
-      check_overlap = TRUE
-    )
-  }
-  gg
-})
+    # Pull historical dataset from the reactive source
+    df <- hist_data()
+    # Defensive checks: ensure data exists and required columns are present
+    req(df)
+    req(all(c("logHR_OS", "logHR_PFS") %in% names(df)))
+    # Current-study PFS input (vertical reference line)
+    cur_pfs <- suppressWarnings(as.numeric(input$current_pfs_loghr))
+    if (!is.finite(cur_pfs)) cur_pfs <- NA_real_
+    # Build the scatter plot: historical OS vs PFS relationship
+    gg <- ggplot(df, aes(x = logHR_PFS, y = logHR_OS)) +
+      geom_point(size = 2, alpha = 0.80) +
+      # Add a simple linear trend line for visualization (not the meta-analytic model)
+      geom_smooth(method = "lm", se = TRUE, formula = y ~ x) +
+      labs(
+        x = "Historical logHR_PFS",
+        y = "Historical logHR_OS",
+        title = "Historical association between PFS and OS",
+        subtitle = "Dashed line indicates current-study PFS input"
+      )
+    # Add the current-study PFS reference line if available
+    if (is.finite(cur_pfs)) {
+      gg <- gg + geom_vline(xintercept = cur_pfs, linetype = "dashed")
+    }
+    # Optional: if a Study identifier exists, label a few extreme points to avoid clutter
+    if ("Study" %in% names(df)) {
+      idx <- unique(c(
+        which.min(df$logHR_PFS), which.max(df$logHR_PFS),
+        which.min(df$logHR_OS),  which.max(df$logHR_OS)
+      ))
+      gg <- gg + geom_text(
+        data = df[idx, , drop = FALSE],
+        aes(label = Study),
+        vjust = -0.6,
+        size = 3,
+        check_overlap = TRUE
+      )
+    }
+    gg
+  })
   
   #########################################################################################################
   output$pred_plot <- renderPlot({
