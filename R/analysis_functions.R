@@ -397,9 +397,10 @@ compute_pos <- function(
   }
   
   warning_messages <- meta_res$warning_messages
+  note_messages <- character(0)
   
-  warning_messages <- c(
-    warning_messages,
+  note_messages <- c(
+    note_messages,
     "Prediction target is the latent final OS treatment effect, consistent across PFS-only and PFS+OS-interim modes.",
     "Under the Daniels-Hughes formulation, current_os_se is not used in the current-study prediction step because the target is latent final OS, not a future noisy final-OS estimate."
   )
@@ -412,8 +413,8 @@ compute_pos <- function(
   }
   
   if (isTRUE(use_os_interim)) {
-    warning_messages <- c(
-      warning_messages,
+    note_messages <- c(
+      note_messages,
       "OS interim mode is ON: current PFS and current OS interim update the same latent final OS target.",
       sprintf(
         "Current-study observation weights for latent final OS: PFS = %.3f, OS interim = %.3f.",
@@ -421,14 +422,14 @@ compute_pos <- function(
       )
     )
     if (abs(rho_pfs_osint) < 1e-12) {
-      warning_messages <- c(
-        warning_messages,
+      note_messages <- c(
+        note_messages,
         "rho_pfs_osint is set to 0. This is a sensitivity-analysis default, not a scientifically established true value."
       )
     }
   } else {
-    warning_messages <- c(
-      warning_messages,
+    note_messages <- c(
+      note_messages,
       sprintf(
         "Current-study observation weight for latent final OS from PFS = %.3f.",
         pred_res$pfs_weight
@@ -445,6 +446,7 @@ compute_pos <- function(
     eta_hat = meta_res$eta_hat,
     Sigma0_hat = meta_res$Sigma0_hat,
     warning_messages = unique(warning_messages),
+    note_messages = unique(note_messages),
     fit = meta_res$fit,
     V_eta = meta_res$V_eta,
     predictor_details = pred_res,
