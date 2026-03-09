@@ -67,108 +67,180 @@ default_hist <- simulate_default_hist()
 example_template_hist <- default_hist
 
 ui <- fluidPage(
-  titlePanel("Internal PoS App V1.7"),
+  tags$head(
+    tags$style(HTML("
+      body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa; }
+      .navbar, .well { background-color: #ffffff; border: none; }
+      .sidebar-section { margin-bottom: 6px; }
+      .sidebar-section h5 {
+        font-size: 13px; font-weight: 700; color: #3a3a5c;
+        text-transform: uppercase; letter-spacing: 0.04em;
+        margin-top: 14px; margin-bottom: 6px;
+      }
+      .sidebar-hr { border-top: 1px solid #e0e0e8; margin: 10px 0; }
+      .main-section-title {
+        font-size: 17px; font-weight: 700; color: #2c3e50;
+        margin-top: 28px; margin-bottom: 10px;
+        border-bottom: 2px solid #d5dce8; padding-bottom: 4px;
+      }
+      .help-box {
+        background-color: #eef3fb; padding: 12px 16px;
+        border-radius: 8px; border-left: 4px solid #3d7abf;
+        margin-bottom: 18px; font-size: 13.5px;
+      }
+      .note-box {
+        color: #0c4a7a; background-color: #ddeeff;
+        padding: 10px 14px; border-radius: 6px;
+        border-left: 4px solid #3d7abf; margin-bottom: 8px;
+        font-size: 13.5px;
+      }
+      .warn-box {
+        color: #664d03; background-color: #fff3cd;
+        padding: 10px 14px; border-radius: 6px;
+        border-left: 4px solid #f0ad4e; margin-bottom: 8px;
+        font-size: 13.5px;
+      }
+      .ok-box {
+        color: #0f5132; background-color: #d1e7dd;
+        padding: 10px 14px; border-radius: 6px;
+        border-left: 4px solid #2ecc71; margin-bottom: 8px;
+        font-size: 13.5px;
+      }
+      .shiny-output-error { color: #c0392b; }
+      .btn-primary { background-color: #3d7abf; border-color: #2c5f8a; width: 100%; font-weight: 600; }
+      .btn-default { font-size: 13px; }
+    "))
+  ),
+  
+  titlePanel(
+    div(
+      style = "background: linear-gradient(90deg, #2c3e50 0%, #3d7abf 100%);
+               color: white; padding: 16px 24px; border-radius: 8px; margin-bottom: 6px;",
+      h2("Internal PoS App", style = "margin: 0; font-weight: 700;"),
+      tags$small("Predictive probability of OS success via Daniels-Hughes surrogate model", style = "opacity: 0.85;")
+    )
+  ),
   
   sidebarLayout(
     sidebarPanel(
-      h4("Historical Data Input"),
-      fileInput("hist_csv", "Upload historical studies CSV", accept = c(".csv")),
-      downloadButton("download_example_template", "Download Example CSV Template"),
-      checkboxInput("use_example_if_no_upload", "Use built-in example data if no CSV uploaded", value = TRUE),
-      br(),
-      tags$small("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN"),
+      width = 3,
+      style = "background-color: #ffffff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);",
       
-      hr(),
-      
-      checkboxInput("use_os_interim", "Use OS interim data (optional)", value = FALSE),
-      
-      conditionalPanel(
-        condition = "input.use_os_interim == true",
-        numericInput("current_os_int_loghr", "Current study OS interim log(HR)", value = log(0.80), step = 0.01),
-        numericInput("current_os_int_se", "Current study OS interim SE", value = 0.20, step = 0.01),
-        tags$small("If selected, the model updates the predicted final OS effect using both PFS and interim OS evidence.")
+      div(class = "sidebar-section",
+        tags$h5("Historical Data"),
+        fileInput("hist_csv", "Upload historical studies CSV", accept = c(".csv")),
+        downloadButton("download_example_template", "Download Example CSV Template", class = "btn-default btn-sm"),
+        br(), br(),
+        checkboxInput("use_example_if_no_upload", "Use built-in example data if no CSV uploaded", value = TRUE),
+        tags$small(style = "color: #666;", "Required columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN")
       ),
-      br(),
       
-      h4("Current Study Inputs"),
-      numericInput("current_pfs_loghr", "Current study PFS log(HR)", value = log(0.68), step = 0.01),
-      numericInput("current_os_se", "Current study OS SE", value = 0.12, min = 0.001, step = 0.01),
-      numericInput("current_pfs_se", "Current study PFS SE", value = 0.10, min = 0.001, step = 0.01),
-      numericInput("current_rho", "Current study within-study correlation", value = 0.50, min = -0.99, max = 0.99, step = 0.05),
+      div(class = "sidebar-hr"),
       
-      hr(),
+      div(class = "sidebar-section",
+        tags$h5("OS Interim Data (Optional)"),
+        checkboxInput("use_os_interim", "Include OS interim data", value = FALSE),
+        conditionalPanel(
+          condition = "input.use_os_interim == true",
+          numericInput("current_os_int_loghr", "OS interim log(HR)", value = log(0.80), step = 0.01),
+          numericInput("current_os_int_se", "OS interim SE", value = 0.20, step = 0.01),
+          tags$small(style = "color: #666;", "Updates predicted final OS using both PFS and interim OS.")
+        )
+      ),
       
-      h4("Analysis Settings"),
-      numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 0.80, min = 0.01, step = 0.01),
-      numericInput("pos_diff_warning_threshold", "Warning threshold for |PoS(REML) - PoS(MM)|", value = 0.05, min = 0, step = 0.01),
+      div(class = "sidebar-hr"),
       
-      hr(),
+      div(class = "sidebar-section",
+        tags$h5("Current Study Inputs"),
+        numericInput("current_pfs_loghr", "PFS log(HR)", value = log(0.68), step = 0.01),
+        numericInput("current_os_se", "OS SE", value = 0.12, min = 0.001, step = 0.01),
+        numericInput("current_pfs_se", "PFS SE", value = 0.10, min = 0.001, step = 0.01),
+        numericInput("current_rho", "Within-study correlation", value = 0.50, min = -0.99, max = 0.99, step = 0.05)
+      ),
       
-      h4("Scenario Plot Settings"),
-      numericInput("scenario_pfs_min", "Scenario min for current PFS log(HR)", value = -0.40, step = 0.01),
-      numericInput("scenario_pfs_max", "Scenario max for current PFS log(HR)", value = 0.20, step = 0.01),
-      numericInput("scenario_n", "Number of scenario points", value = 41, min = 5, step = 2),
+      div(class = "sidebar-hr"),
       
-      hr(),
+      div(class = "sidebar-section",
+        tags$h5("Analysis Settings"),
+        numericInput("success_loghr_threshold", "OS success threshold log(HR)", value = round(log(0.80), 4), step = 0.01),
+        numericInput("pos_diff_warning_threshold", "Warning threshold for |PoS(REML) − PoS(MM)|", value = 0.05, min = 0, step = 0.01)
+      ),
+      
+      div(class = "sidebar-hr"),
+      
+      div(class = "sidebar-section",
+        tags$h5("Scenario Plot Settings"),
+        numericInput("scenario_pfs_min", "Min PFS log(HR)", value = -0.40, step = 0.01),
+        numericInput("scenario_pfs_max", "Max PFS log(HR)", value = 0.20, step = 0.01),
+        numericInput("scenario_n", "Number of scenario points", value = 41, min = 5, step = 2)
+      ),
+      
+      div(class = "sidebar-hr"),
       
       actionButton("run_btn", "Run Analysis", class = "btn-primary"),
       br(), br(),
       
-      downloadButton("download_summary_text", "Download Summary Text"),
-      br(), br(),
-      downloadButton("download_summary_csv", "Download Summary CSV"),
-      br(), br(),
-      downloadButton("download_scenario_csv", "Download Scenario CSV"),
-      
-      br(), br(),
-      helpText("If no CSV is uploaded, the app can use the built-in example dataset.")
+      div(style = "display: flex; flex-direction: column; gap: 8px;",
+        downloadButton("download_summary_text", "Download Summary Text", class = "btn-default btn-sm"),
+        downloadButton("download_summary_csv", "Download Summary CSV", class = "btn-default btn-sm"),
+        downloadButton("download_scenario_csv", "Download Scenario CSV", class = "btn-default btn-sm")
+      )
     ),
     
     mainPanel(
-      h3("Data Source"),
+      width = 9,
+      style = "padding-left: 20px;",
+      
+      div(class = "main-section-title", "Data Source"),
       textOutput("data_source_text"),
       
-      h3("Help / Input Guide"),
-      tags$div(
-        style = "background-color: #f8f9fa; padding: 14px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 18px;",
-        tags$ul(
+      div(class = "main-section-title", "Help / Input Guide"),
+      div(class = "help-box",
+        tags$ul(style = "margin-bottom: 0;",
           tags$li("Required CSV columns: Study, logHR_OS, logHR_PFS, SE_OS, SE_PFS, R_WITHIN."),
-          tags$li("SE_OS and SE_PFS must be > 0; R_WITHIN must be between -1 and 1."),
-          tags$li("REML is used as the primary analysis; MM (Method of Moments) is shown as a sensitivity analysis."),
-          tags$li("If |PoS(REML) - PoS(MM)| exceeds the warning threshold, interpret the result with caution."),
-          tags$li("More negative log(HR) generally indicates a more favorable treatment effect.")
+          tags$li("SE_OS and SE_PFS must be > 0; R_WITHIN must be between −1 and 1."),
+          tags$li("REML is the primary analysis; Method of Moments is a sensitivity check."),
+          tags$li("If |PoS(REML) − PoS(MM)| exceeds the warning threshold, interpret with caution."),
+          tags$li("More negative log(HR) indicates a more favourable treatment effect.")
         )
       ),
       
-      h3("Auto Summary"),
+      div(class = "main-section-title", "Auto Summary"),
       verbatimTextOutput("auto_summary"),
       
-      h3("Main Results"),
-      tableOutput("summary_table"),
+      fluidRow(
+        column(7,
+          div(class = "main-section-title", "Main Results"),
+          tableOutput("summary_table")
+        ),
+        column(5,
+          div(class = "main-section-title", "Method Comparison"),
+          tableOutput("comparison_table")
+        )
+      ),
       
-      h3("Method Comparison"),
-      tableOutput("comparison_table"),
-      
-      h3("Warnings"),
+      div(class = "main-section-title", "Notes & Warnings"),
       uiOutput("warning_box"),
       
-      h3("Predictive Distribution for Current OS"),
-      plotOutput("pred_plot", height = "380px"),
+      div(class = "main-section-title", "Predictive Distribution for Current OS"),
+      plotOutput("pred_plot", height = "400px"),
       
-      h3("PFS Scenario Analysis"),
-      plotOutput("scenario_plot_pos", height = "380px"),
-      plotOutput("scenario_plot_diff", height = "320px"),
-      
-      h3("Estimated Between-study Covariance Matrix"),
+      div(class = "main-section-title", "PFS Scenario Analysis"),
       fluidRow(
-        column(6, h4("REML"), tableOutput("psi_table_reml")),
-        column(6, h4("Method of Moments"), tableOutput("psi_table_mm"))
+        column(7, plotOutput("scenario_plot_pos", height = "380px")),
+        column(5, plotOutput("scenario_plot_diff", height = "380px"))
       ),
-      ##############################newly added on Mar 5, 2026, add scatter plot
-      h3("Historical OS vs PFS (Scatter)"),
+      
+      div(class = "main-section-title", "Historical OS vs PFS Association"),
       plotOutput("scatter_plot", height = "420px"),
-      ############################################      
-      h3("Historical Data Used"),
+      
+      div(class = "main-section-title", "Estimated Between-study Covariance Matrix"),
+      fluidRow(
+        column(6, tags$h5("REML", style = "font-weight: 700; color: #3a3a5c;"), tableOutput("psi_table_reml")),
+        column(6, tags$h5("Method of Moments", style = "font-weight: 700; color: #3a3a5c;"), tableOutput("psi_table_mm"))
+      ),
+      
+      div(class = "main-section-title", "Historical Data Used"),
       tableOutput("hist_table")
     )
   )
@@ -268,7 +340,7 @@ server <- function(input, output, session) {
       current_os_se = input$current_os_se,
       current_pfs_se = input$current_pfs_se,
       current_rho = input$current_rho,
-      success_hr_threshold = input$success_hr_threshold,
+      success_hr_threshold = exp(input$success_loghr_threshold),
       use_os_interim = isTRUE(input$use_os_interim),
       current_os_int_loghr = input$current_os_int_loghr,
       current_os_int_se = input$current_os_int_se
@@ -295,7 +367,7 @@ server <- function(input, output, session) {
         current_os_se = input$current_os_se,
         current_pfs_se = input$current_pfs_se,
         current_rho = input$current_rho,
-        success_hr_threshold = input$success_hr_threshold,
+        success_hr_threshold = exp(input$success_loghr_threshold),
         use_os_interim = isTRUE(input$use_os_interim),
         current_os_int_loghr = input$current_os_int_loghr,
         current_os_int_se = input$current_os_int_se
@@ -451,27 +523,41 @@ server <- function(input, output, session) {
     res <- result()
     if (is.null(res)) return(NULL)
     
-    msgs <- character(0)
+    warn_msgs <- character(0)
+    note_msgs <- character(0)
     
-    collect_msgs <- function(x, label) {
+    collect_warns <- function(x, label) {
       if (inherits(x, "app_error")) {
-        return(paste0(label, ": ", x$error_message))
+        paste0(label, ": ", x$error_message)
+      } else {
+        if (length(x$warning_messages) > 0) paste0(label, ": ", x$warning_messages) else character(0)
       }
-      if (length(x$warning_messages) == 0) return(character(0))
-      paste0(label, ": ", x$warning_messages)
     }
     
-    msgs <- c(msgs, collect_msgs(res$reml, "REML"))
-    msgs <- c(msgs, collect_msgs(res$mm, "Method of Moments"))
+    warn_msgs <- c(warn_msgs, collect_warns(res$reml, "REML"), collect_warns(res$mm, "Method of Moments"))
+    
+    reml_notes <- if (!inherits(res$reml, "app_error")) res$reml$note_messages else character(0)
+    mm_notes   <- if (!inherits(res$mm,   "app_error")) res$mm$note_messages   else character(0)
+    
+    shared_notes    <- intersect(reml_notes, mm_notes)
+    reml_only_notes <- setdiff(reml_notes, shared_notes)
+    mm_only_notes   <- setdiff(mm_notes,   shared_notes)
+    
+    note_msgs <- c(
+      note_msgs,
+      shared_notes,
+      if (length(reml_only_notes) > 0) paste0("REML: ", reml_only_notes) else character(0),
+      if (length(mm_only_notes)   > 0) paste0("Method of Moments: ", mm_only_notes) else character(0)
+    )
     
     if (!inherits(res$reml, "app_error") && !inherits(res$mm, "app_error")) {
       pos_diff <- abs(res$reml$pos - res$mm$pos)
       
       if (pos_diff > input$pos_diff_warning_threshold) {
-        msgs <- c(
-          msgs,
+        warn_msgs <- c(
+          warn_msgs,
           paste0(
-            "Method sensitivity warning: |PoS(REML) - PoS(MM)| = ",
+            "Method sensitivity warning: |PoS(REML) \u2212 PoS(MM)| = ",
             sprintf("%.4f", pos_diff),
             ", which exceeds the warning threshold of ",
             sprintf("%.4f", input$pos_diff_warning_threshold),
@@ -488,30 +574,39 @@ server <- function(input, output, session) {
         )
         
         if (!is.null(prox_msg)) {
-          msgs <- c(msgs, prox_msg)
+          warn_msgs <- c(warn_msgs, prox_msg)
         }
       }
     }
     
-    msgs <- unique(msgs)
+    warn_msgs <- unique(warn_msgs)
+    note_msgs <- unique(note_msgs)
     
-    if (length(msgs) == 0) {
-      return(
-        div(
-          style = "color: #0f5132; background-color: #d1e7dd; padding: 12px; border-radius: 6px; border: 1px solid #badbcc;",
-          "No major warnings."
-        )
-      )
-    }
+    items <- list()
     
-    tagList(
-      lapply(msgs, function(msg) {
-        div(
-          style = "color: #664d03; background-color: #fff3cd; padding: 12px; border-radius: 6px; border: 1px solid #ffecb5; margin-bottom: 8px;",
+    if (length(note_msgs) > 0) {
+      items <- c(items, lapply(note_msgs, function(msg) {
+        div(class = "note-box",
+          tags$span(style = "font-weight: 600; margin-right: 6px;", "\u2139\ufe0f Note:"),
           msg
         )
-      })
-    )
+      }))
+    }
+    
+    if (length(warn_msgs) > 0) {
+      items <- c(items, lapply(warn_msgs, function(msg) {
+        div(class = "warn-box",
+          tags$span(style = "font-weight: 600; margin-right: 6px;", "\u26a0\ufe0f Warning:"),
+          msg
+        )
+      }))
+    }
+    
+    if (length(items) == 0) {
+      return(div(class = "ok-box", "\u2705 No warnings."))
+    }
+    
+    tagList(items)
   })
   
   output$psi_table_reml <- renderTable({
@@ -538,7 +633,6 @@ server <- function(input, output, session) {
     hist_data()
   })
   
-  ###############newly added, scatter plot for input data/simulated data: March 5th 2026 by Jinjie
   output$scatter_plot <- renderPlot({
     # Pull historical dataset from the reactive source
     df <- hist_data()
@@ -550,20 +644,27 @@ server <- function(input, output, session) {
     if (!is.finite(cur_pfs)) cur_pfs <- NA_real_
     # Build the scatter plot: historical OS vs PFS relationship
     gg <- ggplot(df, aes(x = logHR_PFS, y = logHR_OS)) +
-      geom_point(size = 2, alpha = 0.80) +
-      # Add a simple linear trend line for visualization (not the meta-analytic model)
-      geom_smooth(method = "lm", se = TRUE, formula = y ~ x) +
+      geom_smooth(method = "lm", se = TRUE, formula = y ~ x,
+                  colour = "#2c5f8a", fill = "#2c5f8a", alpha = 0.15, linewidth = 1) +
+      geom_point(size = 2.8, alpha = 0.85, colour = "#2c5f8a", shape = 16) +
       labs(
-        x = "Historical logHR_PFS",
-        y = "Historical logHR_OS",
-        title = "Historical association between PFS and OS",
-        subtitle = "Dashed line indicates current-study PFS input"
+        x = "Historical PFS log(HR)",
+        y = "Historical OS log(HR)",
+        title = "Historical association between PFS and OS log(HR)",
+        subtitle = "Shaded band shows 95% CI for linear trend; red dashed line marks current-study PFS input"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(colour = "#666666", size = 11),
+        panel.grid.minor = element_blank()
       )
     # Add the current-study PFS reference line if available
     if (is.finite(cur_pfs)) {
-      gg <- gg + geom_vline(xintercept = cur_pfs, linetype = "dashed")
+      gg <- gg + geom_vline(xintercept = cur_pfs, linetype = "dashed",
+                            colour = "#c0392b", linewidth = 0.9)
     }
-    # Optional: if a Study identifier exists, label a few extreme points to avoid clutter
+    # Label a few extreme points to aid interpretation without cluttering
     if ("Study" %in% names(df)) {
       idx <- unique(c(
         which.min(df$logHR_PFS), which.max(df$logHR_PFS),
@@ -572,8 +673,9 @@ server <- function(input, output, session) {
       gg <- gg + geom_text(
         data = df[idx, , drop = FALSE],
         aes(label = Study),
-        vjust = -0.6,
+        vjust = -0.7,
         size = 3,
+        colour = "#444444",
         check_overlap = TRUE
       )
     }
@@ -591,27 +693,53 @@ server <- function(input, output, session) {
     x_min <- min(plot_res$mean_pred - 4 * plot_res$sd_pred, plot_res$threshold_loghr - 0.5)
     x_max <- max(plot_res$mean_pred + 4 * plot_res$sd_pred, plot_res$threshold_loghr + 0.5)
     
-    df <- data.frame(x = seq(x_min, x_max, length.out = 400))
+    df <- data.frame(x = seq(x_min, x_max, length.out = 500))
     df$dens <- dnorm(df$x, mean = plot_res$mean_pred, sd = plot_res$sd_pred)
+    df$region <- ifelse(df$x <= plot_res$threshold_loghr, "P(success)", "P(failure)")
+    
+    pos_label <- sprintf("PoS = %.1f%%", plot_res$pos * 100)
     
     ggplot(df, aes(x = x, y = dens)) +
-      geom_line(linewidth = 1) +
-      geom_vline(xintercept = plot_res$threshold_loghr, linetype = "dashed") +
+      geom_area(aes(fill = region), alpha = 0.45) +
+      geom_line(linewidth = 1.3, colour = "#2c3e50") +
+      scale_fill_manual(
+        values = c("P(success)" = "#2ecc71", "P(failure)" = "#e74c3c"),
+        name = NULL
+      ) +
+      geom_vline(xintercept = plot_res$threshold_loghr, linetype = "dashed",
+                 colour = "#555555", linewidth = 0.9) +
       annotate(
         "text",
         x = plot_res$threshold_loghr,
-        y = max(df$dens) * 0.9,
-        label = "Success threshold",
+        y = max(df$dens) * 0.88,
+        label = sprintf("Threshold\n(HR = %.2f)", exp(plot_res$threshold_loghr)),
         angle = 90,
-        vjust = -0.5,
-        size = 4
+        vjust = -0.4,
+        size = 3.8,
+        colour = "#555555"
+      ) +
+      annotate(
+        "text",
+        x = plot_res$mean_pred,
+        y = max(df$dens) * 1.03,
+        label = pos_label,
+        size = 4.5,
+        colour = "#2c3e50",
+        fontface = "bold"
       ) +
       labs(
-        title = "Predictive Distribution of Current OS Effect (Plot based on REML when available)",
+        title = "Predictive Distribution of Current-Study OS Effect",
+        subtitle = "REML (primary method); shaded regions show probability of success vs failure",
         x = "Current OS log(HR)",
         y = "Density"
       ) +
-      theme_minimal(base_size = 14)
+      theme_minimal(base_size = 14) +
+      theme(
+        legend.position = "top",
+        plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(colour = "#666666", size = 11),
+        panel.grid.minor = element_blank()
+      )
   })
   
   output$scenario_plot_pos <- renderPlot({
@@ -623,17 +751,27 @@ server <- function(input, output, session) {
       data.frame(current_pfs_loghr = df$current_pfs_loghr, PoS = df$pos_mm, Method = "Method of Moments")
     )
     
-    ggplot(df_long, aes(x = current_pfs_loghr, y = PoS, linetype = Method)) +
-      geom_line(linewidth = 1) +
-      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted") +
+    ggplot(df_long, aes(x = current_pfs_loghr, y = PoS, colour = Method, linetype = Method)) +
+      geom_line(linewidth = 1.2) +
+      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted",
+                 colour = "#555555", linewidth = 0.8) +
       annotate(
         "text",
         x = input$current_pfs_loghr,
-        y = 0.05,
-        label = "Current input",
+        y = 0.06,
+        label = "Current\ninput",
         angle = 90,
-        vjust = -0.5,
-        size = 4
+        vjust = -0.4,
+        size = 3.5,
+        colour = "#555555"
+      ) +
+      scale_colour_manual(
+        values = c("REML" = "#2c5f8a", "Method of Moments" = "#c0392b"),
+        name = "Method"
+      ) +
+      scale_linetype_manual(
+        values = c("REML" = "solid", "Method of Moments" = "dashed"),
+        name = "Method"
       ) +
       labs(
         title = "PoS vs Current-Study PFS log(HR)",
@@ -641,32 +779,57 @@ server <- function(input, output, session) {
         y = "PoS"
       ) +
       coord_cartesian(ylim = c(0, 1)) +
-      theme_minimal(base_size = 14)
+      theme_minimal(base_size = 14) +
+      theme(
+        legend.position = "top",
+        plot.title = element_text(face = "bold", size = 13),
+        panel.grid.minor = element_blank()
+      )
   })
   
   output$scenario_plot_diff <- renderPlot({
     df <- scenario_data()
     if (is.null(df)) return(NULL)
     
+    threshold_y <- input$pos_diff_warning_threshold
+    
     ggplot(df, aes(x = current_pfs_loghr, y = abs_diff)) +
-      geom_line(linewidth = 1) +
-      geom_hline(yintercept = input$pos_diff_warning_threshold, linetype = "dashed") +
-      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted") +
+      geom_hline(yintercept = threshold_y, linetype = "dashed",
+                 colour = "#e74c3c", linewidth = 0.9) +
+      geom_area(fill = "#f4a261", alpha = 0.25) +
+      geom_line(linewidth = 1.2, colour = "#e76f51") +
+      geom_vline(xintercept = input$current_pfs_loghr, linetype = "dotted",
+                 colour = "#555555", linewidth = 0.8) +
       annotate(
         "text",
         x = input$current_pfs_loghr,
-        y = max(df$abs_diff, na.rm = TRUE) * 0.9,
-        label = "Current input",
+        y = max(df$abs_diff, na.rm = TRUE) * 0.88,
+        label = "Current\ninput",
         angle = 90,
+        vjust = -0.4,
+        size = 3.5,
+        colour = "#555555"
+      ) +
+      annotate(
+        "text",
+        x = min(df$current_pfs_loghr, na.rm = TRUE),
+        y = threshold_y,
+        label = sprintf("Threshold (%.2f)", threshold_y),
         vjust = -0.5,
-        size = 4
+        hjust = 0,
+        size = 3.5,
+        colour = "#e74c3c"
       ) +
       labs(
-        title = "Absolute PoS Difference: REML vs MM",
+        title = "|PoS(REML) \u2212 PoS(MM)| vs PFS log(HR)",
         x = "Current-study PFS log(HR)",
-        y = "|PoS(REML) - PoS(MM)|"
+        y = "|PoS(REML) \u2212 PoS(MM)|"
       ) +
-      theme_minimal(base_size = 14)
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title = element_text(face = "bold", size = 13),
+        panel.grid.minor = element_blank()
+      )
   })
   
   output$download_summary_text <- downloadHandler(
@@ -708,7 +871,7 @@ server <- function(input, output, session) {
             "Current OS SE",
             "Current PFS SE",
             "Current within-study correlation",
-            "Success HR threshold",
+            "Success log(HR) threshold",
             "REML PoS",
             "REML predicted OS log(HR)",
             "REML predictive SD",
@@ -725,7 +888,7 @@ server <- function(input, output, session) {
             round(input$current_os_se, 4),
             round(input$current_pfs_se, 4),
             round(input$current_rho, 4),
-            round(input$success_hr_threshold, 4),
+            round(input$success_loghr_threshold, 4),
             round(res$reml$pos, 4),
             round(res$reml$mean_pred, 4),
             round(res$reml$sd_pred, 4),
