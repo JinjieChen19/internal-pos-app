@@ -162,7 +162,7 @@ ui <- fluidPage(
       
       div(class = "sidebar-section",
         tags$h5("Analysis Settings"),
-        numericInput("success_hr_threshold", "OS success threshold (HR scale)", value = 0.80, min = 0.01, step = 0.01),
+        numericInput("success_loghr_threshold", "OS success threshold log(HR)", value = round(log(0.80), 4), step = 0.01),
         numericInput("pos_diff_warning_threshold", "Warning threshold for |PoS(REML) − PoS(MM)|", value = 0.05, min = 0, step = 0.01)
       ),
       
@@ -340,7 +340,7 @@ server <- function(input, output, session) {
       current_os_se = input$current_os_se,
       current_pfs_se = input$current_pfs_se,
       current_rho = input$current_rho,
-      success_hr_threshold = input$success_hr_threshold,
+      success_hr_threshold = exp(input$success_loghr_threshold),
       use_os_interim = isTRUE(input$use_os_interim),
       current_os_int_loghr = input$current_os_int_loghr,
       current_os_int_se = input$current_os_int_se
@@ -367,7 +367,7 @@ server <- function(input, output, session) {
         current_os_se = input$current_os_se,
         current_pfs_se = input$current_pfs_se,
         current_rho = input$current_rho,
-        success_hr_threshold = input$success_hr_threshold,
+        success_hr_threshold = exp(input$success_loghr_threshold),
         use_os_interim = isTRUE(input$use_os_interim),
         current_os_int_loghr = input$current_os_int_loghr,
         current_os_int_se = input$current_os_int_se
@@ -526,25 +526,29 @@ server <- function(input, output, session) {
     warn_msgs <- character(0)
     note_msgs <- character(0)
     
-    collect_msgs <- function(x, label) {
+    collect_warns <- function(x, label) {
       if (inherits(x, "app_error")) {
-        list(
-          warns = paste0(label, ": ", x$error_message),
-          notes = character(0)
-        )
+        paste0(label, ": ", x$error_message)
       } else {
-        list(
-          warns = if (length(x$warning_messages) > 0) paste0(label, ": ", x$warning_messages) else character(0),
-          notes = if (length(x$note_messages) > 0) paste0(label, ": ", x$note_messages) else character(0)
-        )
+        if (length(x$warning_messages) > 0) paste0(label, ": ", x$warning_messages) else character(0)
       }
     }
     
-    reml_msgs <- collect_msgs(res$reml, "REML")
-    mm_msgs   <- collect_msgs(res$mm, "Method of Moments")
+    warn_msgs <- c(warn_msgs, collect_warns(res$reml, "REML"), collect_warns(res$mm, "Method of Moments"))
     
-    warn_msgs <- c(warn_msgs, reml_msgs$warns, mm_msgs$warns)
-    note_msgs <- c(note_msgs, reml_msgs$notes, mm_msgs$notes)
+    reml_notes <- if (!inherits(res$reml, "app_error")) res$reml$note_messages else character(0)
+    mm_notes   <- if (!inherits(res$mm,   "app_error")) res$mm$note_messages   else character(0)
+    
+    shared_notes    <- intersect(reml_notes, mm_notes)
+    reml_only_notes <- setdiff(reml_notes, shared_notes)
+    mm_only_notes   <- setdiff(mm_notes,   shared_notes)
+    
+    note_msgs <- c(
+      note_msgs,
+      shared_notes,
+      if (length(reml_only_notes) > 0) paste0("REML: ", reml_only_notes) else character(0),
+      if (length(mm_only_notes)   > 0) paste0("Method of Moments: ", mm_only_notes) else character(0)
+    )
     
     if (!inherits(res$reml, "app_error") && !inherits(res$mm, "app_error")) {
       pos_diff <- abs(res$reml$pos - res$mm$pos)
@@ -867,7 +871,7 @@ server <- function(input, output, session) {
             "Current OS SE",
             "Current PFS SE",
             "Current within-study correlation",
-            "Success HR threshold",
+            "Success log(HR) threshold",
             "REML PoS",
             "REML predicted OS log(HR)",
             "REML predictive SD",
@@ -884,7 +888,7 @@ server <- function(input, output, session) {
             round(input$current_os_se, 4),
             round(input$current_pfs_se, 4),
             round(input$current_rho, 4),
-            round(input$success_hr_threshold, 4),
+            round(input$success_loghr_threshold, 4),
             round(res$reml$pos, 4),
             round(res$reml$mean_pred, 4),
             round(res$reml$sd_pred, 4),
